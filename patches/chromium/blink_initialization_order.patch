@@ -10,10 +10,10 @@ to fix electron/electron#13787.  The backport landed in Chromium 67 but the
 DidCreateScriptContext re-ordering needs to be upstreamed or kept indefinitely
 
 diff --git a/third_party/blink/renderer/bindings/core/v8/local_window_proxy.cc b/third_party/blink/renderer/bindings/core/v8/local_window_proxy.cc
-index c0ec993ca6d96c5f95eb7b918ca9c37d9defff43..2522add8f9b1e3ada14fcc5c09d161b0820f4418 100644
+index c845acb8321e94c916798826a168e06df34ffff4..941ca9d3905c0c2f36606655bf60e9e9bd1f9196 100644
 --- a/third_party/blink/renderer/bindings/core/v8/local_window_proxy.cc
 +++ b/third_party/blink/renderer/bindings/core/v8/local_window_proxy.cc
-@@ -205,11 +205,10 @@ void LocalWindowProxy::Initialize() {
+@@ -211,11 +211,10 @@ void LocalWindowProxy::Initialize() {
                   GetFrame()->IsMainFrame());
      MainThreadDebugger::Instance()->ContextCreated(script_state_, GetFrame(),
                                                     origin);
@@ -23,6 +23,6 @@ index c0ec993ca6d96c5f95eb7b918ca9c37d9defff43..2522add8f9b1e3ada14fcc5c09d161b0
  
 -  InstallConditionalFeatures();
 -
-   // This needs to go after everything else since it accesses the window object.
-   InitializeV8ExtrasBinding(script_state_);
- 
+   if (World().IsMainWorld()) {
+     GetFrame()->Loader().DispatchDidClearWindowObjectInMainWorld();
+   }

@@ -33,8 +33,9 @@ static base::mac::ScopedObjCClassSwizzler* g_swizzle_imk_input_session;
   // not have fatal OOM occur while this method executes, but it is better
   // than crashing when using IME.
   base::allocator::SetCallNewHandlerOnMallocFailure(false);
-  g_swizzle_imk_input_session->GetOriginalImplementation()(self, _cmd, range,
-                                                           attributes, block);
+  g_swizzle_imk_input_session
+      ->InvokeOriginal<void, NSRange, long long, void (^)(void)>(
+          self, _cmd, range, attributes, block);
   base::allocator::SetCallNewHandlerOnMallocFailure(true);
 }
 @end
@@ -60,10 +61,9 @@ static base::mac::ScopedObjCClassSwizzler* g_swizzle_imk_input_session;
   NSUserNotification* user_notification =
       [notify userInfo][(id) @"NSApplicationLaunchUserNotificationKey"];
 
-  if (user_notification.userInfo != nil) {
-    std::unique_ptr<base::DictionaryValue> launch_info =
-        electron::NSDictionaryToDictionaryValue(user_notification.userInfo);
-    electron::Browser::Get()->DidFinishLaunching(*launch_info);
+  if (user_notification.userInfo) {
+    electron::Browser::Get()->DidFinishLaunching(
+        electron::NSDictionaryToDictionaryValue(user_notification.userInfo));
   } else {
     electron::Browser::Get()->DidFinishLaunching(base::DictionaryValue());
   }
@@ -108,13 +108,15 @@ static base::mac::ScopedObjCClassSwizzler* g_swizzle_imk_input_session;
 #endif
               restorationHandler {
   std::string activity_type(base::SysNSStringToUTF8(userActivity.activityType));
-  std::unique_ptr<base::DictionaryValue> user_info =
-      electron::NSDictionaryToDictionaryValue(userActivity.userInfo);
-  if (!user_info)
+  if (!userActivity.userInfo)
     return NO;
 
   electron::Browser* browser = electron::Browser::Get();
-  return browser->ContinueUserActivity(activity_type, *user_info) ? YES : NO;
+  return browser->ContinueUserActivity(
+             activity_type,
+             electron::NSDictionaryToDictionaryValue(userActivity.userInfo))
+             ? YES
+             : NO;
 }
 
 - (BOOL)application:(NSApplication*)application

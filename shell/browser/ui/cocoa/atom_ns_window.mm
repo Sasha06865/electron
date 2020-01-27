@@ -24,6 +24,7 @@ bool ScopedDisableResize::disable_resize_ = false;
 @synthesize disableAutoHideCursor;
 @synthesize disableKeyOrMainWindow;
 @synthesize vibrantView;
+@synthesize cornerMask;
 
 - (id)initWithShell:(electron::NativeWindowMac*)shell
           styleMask:(NSUInteger)styleMask {
@@ -103,8 +104,6 @@ bool ScopedDisableResize::disable_resize_ = false;
 }
 
 - (id)accessibilityAttributeValue:(NSString*)attribute {
-  if ([attribute isEqual:NSAccessibilityTitleAttribute])
-    return base::SysUTF8ToNSString(shell_->GetTitle());
   if ([attribute isEqual:NSAccessibilityEnabledAttribute])
     return [NSNumber numberWithBool:YES];
   if (![attribute isEqualToString:@"AXChildren"])
@@ -125,6 +124,10 @@ bool ScopedDisableResize::disable_resize_ = false;
   return [children filteredArrayUsingPredicate:predicate];
 }
 
+- (NSString*)accessibilityTitle {
+  return base::SysUTF8ToNSString(shell_->GetTitle());
+}
+
 - (BOOL)canBecomeMainWindow {
   return !self.disableKeyOrMainWindow;
 }
@@ -135,6 +138,12 @@ bool ScopedDisableResize::disable_resize_ = false;
 
 - (NSView*)frameView {
   return [[self contentView] superview];
+}
+
+// By overriding this built-in method the corners of the vibrant view (if set)
+// will be smooth.
+- (NSImage*)_cornerMask {
+  return [self cornerMask];
 }
 
 // Quicklook methods
@@ -178,8 +187,14 @@ bool ScopedDisableResize::disable_resize_ = false;
 }
 
 - (void)toggleFullScreenMode:(id)sender {
-  if (shell_->simple_fullscreen())
-    shell_->SetSimpleFullScreen(!shell_->IsSimpleFullScreen());
+  bool is_simple_fs = shell_->IsSimpleFullScreen();
+  bool always_simple_fs = shell_->always_simple_fullscreen();
+
+  // If we're in simple fullscreen mode and trying to exit it
+  // we need to ensure we exit it properly to prevent a crash
+  // with NSWindowStyleMaskTitled mode
+  if (is_simple_fs || always_simple_fs)
+    shell_->SetSimpleFullScreen(!is_simple_fs);
   else
     [super toggleFullScreen:sender];
 }

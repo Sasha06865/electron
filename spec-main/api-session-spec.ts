@@ -9,7 +9,7 @@ import * as send from 'send'
 import * as auth from 'basic-auth'
 import { closeAllWindows } from './window-helpers'
 import { emittedOnce } from './events-helpers'
-import { AddressInfo } from 'net';
+import { AddressInfo } from 'net'
 
 /* The whole session API doesn't use standard callbacks */
 /* eslint-disable standard/no-callback-literal */
@@ -58,6 +58,15 @@ describe('session module', () => {
     const value = '0'
     afterEach(closeAllWindows)
 
+    // Clear cookie of defaultSession after each test.
+    afterEach(async () => {
+      const { cookies } = session.defaultSession
+      const cs = await cookies.get({ url })
+      for (const c of cs) {
+        await cookies.remove(url, c.name)
+      }
+    })
+
     it('should get cookies', async () => {
       const server = http.createServer((req, res) => {
         res.setHeader('Set-Cookie', [`${name}=${value}`])
@@ -78,8 +87,42 @@ describe('session module', () => {
       const name = '1'
       const value = '1'
 
-      await cookies.set({ url, name, value, expirationDate: (+new Date) / 1000 + 120 })
-      const cs = await cookies.get({ url })
+      await cookies.set({ url, name, value, expirationDate: (+new Date()) / 1000 + 120 })
+      const c = (await cookies.get({ url }))[0]
+      expect(c.name).to.equal(name)
+      expect(c.value).to.equal(value)
+      expect(c.session).to.equal(false)
+    })
+
+    it('sets session cookies', async () => {
+      const { cookies } = session.defaultSession
+      const name = '2'
+      const value = '1'
+
+      await cookies.set({ url, name, value })
+      const c = (await cookies.get({ url }))[0]
+      expect(c.name).to.equal(name)
+      expect(c.value).to.equal(value)
+      expect(c.session).to.equal(true)
+    })
+
+    it('sets cookies without name', async () => {
+      const { cookies } = session.defaultSession
+      const value = '3'
+
+      await cookies.set({ url, value })
+      const c = (await cookies.get({ url }))[0]
+      expect(c.name).to.be.empty()
+      expect(c.value).to.equal(value)
+    })
+
+    it('gets cookies without url', async () => {
+      const { cookies } = session.defaultSession
+      const name = '1'
+      const value = '1'
+
+      await cookies.set({ url, name, value, expirationDate: (+new Date()) / 1000 + 120 })
+      const cs = await cookies.get({ domain: '127.0.0.1' })
       expect(cs.some(c => c.name === name && c.value === value)).to.equal(true)
     })
 
@@ -181,7 +224,7 @@ describe('session module', () => {
       const appPath = path.join(fixtures, 'api', 'cookie-app')
 
       const runAppWithPhase = (phase: string) => {
-        return new Promise((resolve, reject) => {
+        return new Promise((resolve) => {
           let output = ''
 
           const appProcess = ChildProcess.spawn(
@@ -191,7 +234,7 @@ describe('session module', () => {
           )
 
           appProcess.stdout.on('data', data => { output += data })
-          appProcess.stdout.on('end', () => {
+          appProcess.on('exit', () => {
             resolve(output.replace(/(\r\n|\n|\r)/gm, ''))
           })
         })
@@ -240,17 +283,16 @@ describe('session module', () => {
       const port = (downloadServer.address() as AddressInfo).port
       const url = `http://127.0.0.1:${port}/`
 
-      const downloadPrevented: Promise<Electron.DownloadItem> = new Promise(resolve => {
+      const downloadPrevented: Promise<{itemUrl: string, itemFilename: string, item: Electron.DownloadItem}> = new Promise(resolve => {
         w.webContents.session.once('will-download', function (e, item) {
           e.preventDefault()
-          resolve(item)
+          resolve({ itemUrl: item.getURL(), itemFilename: item.getFilename(), item })
         })
       })
       w.loadURL(url)
-      const item = await downloadPrevented
-      expect(item.getURL()).to.equal(url)
-      expect(item.getFilename()).to.equal('mockFile.txt')
-      await new Promise(setImmediate)
+      const { item, itemUrl, itemFilename } = await downloadPrevented
+      expect(itemUrl).to.equal(url)
+      expect(itemFilename).to.equal('mockFile.txt')
       expect(() => item.getURL()).to.throw('Object has been destroyed')
     })
   })
@@ -288,7 +330,7 @@ describe('session module', () => {
         show: false,
         webPreferences: {
           partition: partitionName,
-          nodeIntegration: true,
+          nodeIntegration: true
         }
       })
       customSession = session.fromPartition(partitionName)
@@ -304,11 +346,6 @@ describe('session module', () => {
 
     beforeEach(async () => {
       customSession = session.fromPartition('proxyconfig')
-      // FIXME(deepak1556): This is just a hack to force
-      // creation of request context which in turn initializes
-      // the network context, can be removed with network
-      // service enabled.
-      await customSession.clearHostResolverCache()
     })
 
     afterEach(() => {
@@ -439,9 +476,9 @@ describe('session module', () => {
     afterEach(closeAllWindows)
 
     it('accepts the request when the callback is called with 0', async () => {
-      session.defaultSession.setCertificateVerifyProc(({ hostname, certificate, verificationResult, errorCode }, callback) => {
-        expect(['net::ERR_CERT_AUTHORITY_INVALID', 'net::ERR_CERT_COMMON_NAME_INVALID'].includes(verificationResult)).to.be.true
-        expect([-202, -200].includes(errorCode)).to.be.true
+      session.defaultSession.setCertificateVerifyProc(({ verificationResult, errorCode }, callback) => {
+        expect(['net::ERR_CERT_AUTHORITY_INVALID', 'net::ERR_CERT_COMMON_NAME_INVALID'].includes(verificationResult)).to.be.true()
+        expect([-202, -200].includes(errorCode)).to.be.true()
         callback(0)
       })
 
@@ -462,7 +499,7 @@ describe('session module', () => {
         expect(certificate.issuerCert.issuerCert.issuer.commonName).to.equal('Root CA')
         expect(certificate.issuerCert.issuerCert.subject.commonName).to.equal('Root CA')
         expect(certificate.issuerCert.issuerCert.issuerCert).to.equal(undefined)
-        expect(['net::ERR_CERT_AUTHORITY_INVALID', 'net::ERR_CERT_COMMON_NAME_INVALID'].includes(verificationResult)).to.be.true
+        expect(['net::ERR_CERT_AUTHORITY_INVALID', 'net::ERR_CERT_COMMON_NAME_INVALID'].includes(verificationResult)).to.be.true()
         callback(-2)
       })
 
@@ -474,7 +511,7 @@ describe('session module', () => {
 
     it('saves cached results', async () => {
       let numVerificationRequests = 0
-      session.defaultSession.setCertificateVerifyProc(({ hostname, certificate, verificationResult }, callback) => {
+      session.defaultSession.setCertificateVerifyProc((e, callback) => {
         numVerificationRequests++
         callback(-2)
       })
@@ -507,15 +544,23 @@ describe('session module', () => {
       const fetch = (url: string) => new Promise((resolve, reject) => {
         const request = net.request({ url, session: ses })
         request.on('response', (response) => {
-          let data = ''
+          let data: string | null = null
           response.on('data', (chunk) => {
+            if (!data) {
+              data = ''
+            }
             data += chunk
           })
           response.on('end', () => {
-            resolve(data)
+            if (!data) {
+              reject(new Error('Empty response'))
+            } else {
+              resolve(data)
+            }
           })
           response.on('error', (error: any) => { reject(new Error(error)) })
-        });
+        })
+        request.on('error', (error: any) => { reject(new Error(error)) })
         request.end()
       })
       // the first time should throw due to unauthenticated
@@ -624,7 +669,7 @@ describe('session module', () => {
       const port = address.port
       const w = new BrowserWindow({ show: false, webPreferences: { webviewTag: true } })
       await w.loadURL('about:blank')
-      function webviewDownload({fixtures, url, port}: {fixtures: string, url: string, port: string}) {
+      function webviewDownload ({ fixtures, url, port }: {fixtures: string, url: string, port: string}) {
         const webview = new (window as any).WebView()
         webview.addEventListener('did-finish-load', () => {
           webview.downloadURL(`${url}:${port}/`)
@@ -640,7 +685,7 @@ describe('session module', () => {
           })
         })
       })
-      await w.webContents.executeJavaScript(`(${webviewDownload})(${JSON.stringify({fixtures, url, port})})`)
+      await w.webContents.executeJavaScript(`(${webviewDownload})(${JSON.stringify({ fixtures, url, port })})`)
       const [state, item] = await done
       assertDownload(state, item)
     })
@@ -675,7 +720,7 @@ describe('session module', () => {
       const w = new BrowserWindow({ show: false })
       w.webContents.session.once('will-download', function (e, item) {
         item.savePath = downloadFilePath
-        item.on('done', function (e, state) {
+        item.on('done', function () {
           expect(item.getFilename()).to.equal('download.pdf')
           done()
         })
@@ -707,7 +752,7 @@ describe('session module', () => {
       w.webContents.session.once('will-download', function (e, item) {
         item.setSavePath(filePath)
         item.setSaveDialogOptions(options)
-        item.on('done', function (e, state) {
+        item.on('done', function () {
           expect(item.getSaveDialogOptions()).to.deep.equal(options)
           done()
         })
@@ -736,7 +781,7 @@ describe('session module', () => {
 
   describe('ses.createInterruptedDownload(options)', () => {
     afterEach(closeAllWindows)
-    it('can create an interrupted download item', (done) => {
+    it('can create an interrupted download item', async () => {
       const downloadFilePath = path.join(__dirname, '..', 'fixtures', 'mock.pdf')
       const options = {
         path: downloadFilePath,
@@ -746,17 +791,16 @@ describe('session module', () => {
         length: 5242880
       }
       const w = new BrowserWindow({ show: false })
-      w.webContents.session.once('will-download', function (e, item) {
-        expect(item.getState()).to.equal('interrupted')
-        item.cancel()
-        expect(item.getURLChain()).to.deep.equal(options.urlChain)
-        expect(item.getMimeType()).to.equal(options.mimeType)
-        expect(item.getReceivedBytes()).to.equal(options.offset)
-        expect(item.getTotalBytes()).to.equal(options.length)
-        expect(item.savePath).to.equal(downloadFilePath)
-        done()
-      })
+      const p = emittedOnce(w.webContents.session, 'will-download')
       w.webContents.session.createInterruptedDownload(options)
+      const [, item] = await p
+      expect(item.getState()).to.equal('interrupted')
+      item.cancel()
+      expect(item.getURLChain()).to.deep.equal(options.urlChain)
+      expect(item.getMimeType()).to.equal(options.mimeType)
+      expect(item.getReceivedBytes()).to.equal(options.offset)
+      expect(item.getTotalBytes()).to.equal(options.length)
+      expect(item.savePath).to.equal(downloadFilePath)
     })
 
     it('can be resumed', async () => {
@@ -773,7 +817,7 @@ describe('session module', () => {
         const downloadCancelled: Promise<Electron.DownloadItem> = new Promise((resolve) => {
           w.webContents.session.once('will-download', function (e, item) {
             item.setSavePath(downloadFilePath)
-            item.on('done', function (e, state) {
+            item.on('done', function () {
               resolve(item)
             })
             item.cancel()
@@ -791,14 +835,14 @@ describe('session module', () => {
           offset: item.getReceivedBytes(),
           length: item.getTotalBytes(),
           lastModified: item.getLastModifiedTime(),
-          eTag: item.getETag(),
+          eTag: item.getETag()
         }
         const downloadResumed: Promise<Electron.DownloadItem> = new Promise((resolve) => {
           w.webContents.session.once('will-download', function (e, item) {
             expect(item.getState()).to.equal('interrupted')
             item.setSavePath(downloadFilePath)
             item.resume()
-            item.on('done', function (e, state) {
+            item.on('done', function () {
               resolve(item)
             })
           })
@@ -826,7 +870,7 @@ describe('session module', () => {
         show: false,
         webPreferences: {
           partition: `very-temp-permision-handler`,
-          nodeIntegration: true,
+          nodeIntegration: true
         }
       })
 
@@ -841,15 +885,15 @@ describe('session module', () => {
 
       const result = emittedOnce(require('electron').ipcMain, 'message')
 
-      function remote() {
-        (navigator as any).requestMIDIAccess({sysex: true}).then(() => {}, (err: any) => {
-          require('electron').ipcRenderer.send('message', err.name);
-        });
+      function remote () {
+        (navigator as any).requestMIDIAccess({ sysex: true }).then(() => {}, (err: any) => {
+          require('electron').ipcRenderer.send('message', err.name)
+        })
       }
 
       await w.loadURL('https://myfakesite')
 
-      const [,name] = await result
+      const [, name] = await result
       expect(name).to.deep.equal('SecurityError')
     })
   })
@@ -859,14 +903,14 @@ describe('session module', () => {
 
     it('can be retrieved with getUserAgent()', () => {
       const userAgent = 'test-agent'
-      const ses = session.fromPartition(''+Math.random())
+      const ses = session.fromPartition('' + Math.random())
       ses.setUserAgent(userAgent)
       expect(ses.getUserAgent()).to.equal(userAgent)
     })
 
     it('sets the User-Agent header for web requests made from renderers', async () => {
       const userAgent = 'test-agent'
-      const ses = session.fromPartition(''+Math.random())
+      const ses = session.fromPartition('' + Math.random())
       ses.setUserAgent(userAgent)
       const w = new BrowserWindow({ show: false, webPreferences: { session: ses } })
       let headers: http.IncomingHttpHeaders | null = null

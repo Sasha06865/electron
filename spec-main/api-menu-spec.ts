@@ -1,7 +1,13 @@
+import * as cp from 'child_process'
+import * as path from 'path'
 import { expect } from 'chai'
-import { BrowserWindow, globalShortcut, Menu, MenuItem } from 'electron'
+import { BrowserWindow, Menu, MenuItem } from 'electron'
 import { sortMenuItems } from '../lib/browser/api/menu-utils'
+import { emittedOnce } from './events-helpers'
+import { ifit } from './spec-helpers'
 import { closeWindow } from './window-helpers'
+
+const fixturesPath = path.resolve(__dirname, 'fixtures')
 
 describe('Menu module', function () {
   this.timeout(5000)
@@ -822,6 +828,31 @@ describe('Menu module', function () {
         menu.closePopup()
       })
     })
+
+    it('prevents menu from getting garbage-collected when popuping', (done) => {
+      const menu = Menu.buildFromTemplate([{ role: 'paste' }])
+      menu.popup({ window: w })
+
+      // Keep a weak reference to the menu.
+      const v8Util = process.electronBinding('v8_util')
+      const map = v8Util.createIDWeakMap<Electron.Menu>()
+      map.set(0, menu)
+
+      setTimeout(() => {
+        // Do garbage collection, since |menu| is not referenced in this closure
+        // it would be gone after next call.
+        v8Util.requestGarbageCollectionForTesting()
+        setTimeout(() => {
+          // Try to receive menu from weak reference.
+          if (map.has(0)) {
+            map.get(0)!.closePopup()
+            done()
+          } else {
+            done('Menu is garbage-collected while popuping')
+          }
+        })
+      })
+    })
   })
 
   describe('Menu.setApplicationMenu', () => {
@@ -839,98 +870,27 @@ describe('Menu module', function () {
       Menu.setApplicationMenu(null)
       expect(Menu.getApplicationMenu()).to.be.null('application menu')
     })
-  })
 
-  describe('menu accelerators', async () => {
-    const sendRobotjsKey = (key: string, modifiers: string | string[] = [], delay = 500) => {
-      return new Promise((resolve, reject) => {
-        try {
-          require('robotjs').keyTap(key, modifiers)
-          setTimeout(() => {
-            resolve()
-          }, delay)
-        } catch (e) {
-          reject(e)
-        }
-      })
-    }
+    ifit(process.platform !== 'darwin')('does not override menu visibility on startup', async () => {
+      const appPath = path.join(fixturesPath, 'api', 'test-menu-visibility')
+      const appProcess = cp.spawn(process.execPath, [appPath])
 
-    before(async function () {
-      // --ci flag breaks accelerator and robotjs interaction
-      if (isCI) {
-        this.skip()
-      }
+      let output = ''
+      appProcess.stdout.on('data', data => { output += data })
 
-      // before accelerator tests, use globalShortcut to test if
-      // RobotJS is working at all
-      let isKeyPressed = false
-      globalShortcut.register('q', () => {
-        isKeyPressed = true
-      })
-      try {
-        await sendRobotjsKey('q')
-      } catch (e) {
-        this.skip()
-      }
-
-      if (!isKeyPressed) {
-        this.skip()
-      }
-
-      globalShortcut.unregister('q')
+      await emittedOnce(appProcess, 'exit')
+      expect(output).to.include('Window has no menu')
     })
 
-    it('should perform the specified action', async () => {
-      let hasBeenClicked = false
-      const menu = Menu.buildFromTemplate([
-        {
-          label: 'Test',
-          submenu: [
-            {
-              label: 'Test Item',
-              accelerator: 'T',
-              click: (a, b, event) => {
-                hasBeenClicked = true
-                expect(event).to.deep.equal({
-                  shiftKey: false,
-                  ctrlKey: false,
-                  altKey: false,
-                  metaKey: false,
-                  triggeredByAccelerator: true
-                })
-              },
-              id: 'test'
-            }
-          ]
-        }
-      ])
-      Menu.setApplicationMenu(menu)
-      expect(Menu.getApplicationMenu()).to.not.be.null('application menu')
-      await sendRobotjsKey('t')
-      expect(hasBeenClicked).to.equal(true)
-    })
+    ifit(process.platform !== 'darwin')('does not override null menu on startup', async () => {
+      const appPath = path.join(fixturesPath, 'api', 'test-menu-null')
+      const appProcess = cp.spawn(process.execPath, [appPath])
 
-    it('should not activate upon clicking another key combination', async () => {
-      let hasBeenClicked = false
-      const menu = Menu.buildFromTemplate([
-        {
-          label: 'Test',
-          submenu: [
-            {
-              label: 'Test Item',
-              accelerator: 'T',
-              click: (a, b, event) => {
-                hasBeenClicked = true
-              },
-              id: 'test'
-            }
-          ]
-        }
-      ])
-      Menu.setApplicationMenu(menu)
-      expect(Menu.getApplicationMenu()).to.not.be.null('application menu')
-      await sendRobotjsKey('t', 'shift')
-      expect(hasBeenClicked).to.equal(false)
+      let output = ''
+      appProcess.stdout.on('data', data => { output += data })
+
+      await emittedOnce(appProcess, 'exit')
+      expect(output).to.include('Window has no menu')
     })
   })
 })

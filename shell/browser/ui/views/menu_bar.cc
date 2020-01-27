@@ -39,7 +39,7 @@ const char MenuBar::kViewClassName[] = "ElectronMenuBar";
 MenuBarColorUpdater::MenuBarColorUpdater(MenuBar* menu_bar)
     : menu_bar_(menu_bar) {}
 
-MenuBarColorUpdater::~MenuBarColorUpdater() {}
+MenuBarColorUpdater::~MenuBarColorUpdater() = default;
 
 void MenuBarColorUpdater::OnDidChangeFocus(views::View* focused_before,
                                            views::View* focused_now) {
@@ -159,17 +159,15 @@ bool MenuBar::AcceleratorPressed(const ui::Accelerator& accelerator) {
           views::FocusManager::FocusChangeReason::kFocusTraversal);
       return true;
     default: {
-      auto children = GetChildrenInZOrder();
-      for (int i = 0, n = children.size(); i < n; ++i) {
-        auto* button = static_cast<SubmenuButton*>(children[i]);
+      for (auto* child : GetChildrenInZOrder()) {
+        auto* button = static_cast<SubmenuButton*>(child);
         bool shifted = false;
         auto keycode =
             electron::KeyboardCodeFromCharCode(button->accelerator(), &shifted);
 
         if (keycode == accelerator.key_code()) {
-          const gfx::Point p(0, 0);
           auto event = accelerator.ToKeyEvent();
-          OnMenuButtonClicked(button, p, &event);
+          ButtonPressed(button, event);
           return true;
         }
       }
@@ -204,10 +202,9 @@ bool MenuBar::SetPaneFocus(views::View* initial_focus) {
   bool result = views::AccessiblePaneView::SetPaneFocus(initial_focus);
 
   if (result) {
-    auto children = GetChildrenInZOrder();
     std::set<ui::KeyboardCode> reg;
-    for (int i = 0, n = children.size(); i < n; ++i) {
-      auto* button = static_cast<SubmenuButton*>(children[i]);
+    for (auto* child : GetChildrenInZOrder()) {
+      auto* button = static_cast<SubmenuButton*>(child);
       bool shifted = false;
       auto keycode =
           electron::KeyboardCodeFromCharCode(button->accelerator(), &shifted);
@@ -235,10 +232,9 @@ void MenuBar::RemovePaneFocus() {
   views::AccessiblePaneView::RemovePaneFocus();
   SetAcceleratorVisibility(false);
 
-  auto children = GetChildrenInZOrder();
   std::set<ui::KeyboardCode> unreg;
-  for (int i = 0, n = children.size(); i < n; ++i) {
-    auto* button = static_cast<SubmenuButton*>(children[i]);
+  for (auto* child : GetChildrenInZOrder()) {
+    auto* button = static_cast<SubmenuButton*>(child);
     bool shifted = false;
     auto keycode =
         electron::KeyboardCodeFromCharCode(button->accelerator(), &shifted);
@@ -258,9 +254,7 @@ const char* MenuBar::GetClassName() const {
   return kViewClassName;
 }
 
-void MenuBar::OnMenuButtonClicked(views::Button* source,
-                                  const gfx::Point& point,
-                                  const ui::Event* event) {
+void MenuBar::ButtonPressed(views::Button* source, const ui::Event& event) {
   // Hide the accelerator when a submenu is activated.
   SetAcceleratorVisibility(false);
 
@@ -279,10 +273,9 @@ void MenuBar::OnMenuButtonClicked(views::Button* source,
 
   // Deleted in MenuDelegate::OnMenuClosed
   MenuDelegate* menu_delegate = new MenuDelegate(this);
-  menu_delegate->RunMenu(menu_model_->GetSubmenuModelAt(id), source,
-                         event != nullptr && event->IsKeyEvent()
-                             ? ui::MENU_SOURCE_KEYBOARD
-                             : ui::MENU_SOURCE_MOUSE);
+  menu_delegate->RunMenu(
+      menu_model_->GetSubmenuModelAt(id), source,
+      event.IsKeyEvent() ? ui::MENU_SOURCE_KEYBOARD : ui::MENU_SOURCE_MOUSE);
   menu_delegate->AddObserver(this);
 }
 

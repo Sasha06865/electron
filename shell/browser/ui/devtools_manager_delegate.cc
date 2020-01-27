@@ -92,9 +92,9 @@ void DevToolsManagerDelegate::StartHttpHandler() {
       CreateSocketFactory(), user_dir, base::FilePath());
 }
 
-DevToolsManagerDelegate::DevToolsManagerDelegate() {}
+DevToolsManagerDelegate::DevToolsManagerDelegate() = default;
 
-DevToolsManagerDelegate::~DevToolsManagerDelegate() {}
+DevToolsManagerDelegate::~DevToolsManagerDelegate() = default;
 
 void DevToolsManagerDelegate::Inspect(content::DevToolsAgentHost* agent_host) {}
 
@@ -102,7 +102,7 @@ void DevToolsManagerDelegate::HandleCommand(
     content::DevToolsAgentHost* agent_host,
     content::DevToolsAgentHostClient* client,
     const std::string& method,
-    const std::string& message,
+    base::span<const uint8_t> message,
     NotHandledCallback callback) {
   std::move(callback).Run(message);
 }

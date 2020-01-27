@@ -14,18 +14,16 @@
 #include "base/values.h"
 #include "gin/converter.h"
 #include "gin/dictionary.h"
-#include "net/base/upload_bytes_element_reader.h"
-#include "net/base/upload_data_stream.h"
-#include "net/base/upload_element_reader.h"
-#include "net/base/upload_file_element_reader.h"
 #include "net/cert/x509_certificate.h"
 #include "net/cert/x509_util.h"
 #include "net/http/http_response_headers.h"
+#include "net/http/http_version.h"
+#include "net/url_request/redirect_info.h"
 #include "services/network/public/cpp/resource_request.h"
 #include "shell/browser/api/atom_api_data_pipe_holder.h"
 #include "shell/common/gin_converters/gurl_converter.h"
 #include "shell/common/gin_converters/std_converter.h"
-#include "shell/common/gin_converters/value_converter_gin_adapter.h"
+#include "shell/common/gin_converters/value_converter.h"
 #include "shell/common/node_includes.h"
 
 namespace gin {
@@ -164,7 +162,7 @@ v8::Local<v8::Value> Converter<net::HttpResponseHeaders*>::ToV8(
       base::Value* values = response_headers.FindListKey(key);
       if (!values)
         values = response_headers.SetKey(key, base::ListValue());
-      values->GetList().emplace_back(value);
+      values->Append(value);
     }
   }
   return ConvertToV8(isolate, response_headers);
@@ -258,14 +256,22 @@ v8::Local<v8::Value> Converter<network::ResourceRequestBody>::ToV8(
     gin::Dictionary upload_data(isolate, v8::Object::New(isolate));
     switch (element.type()) {
       case network::mojom::DataElementType::kFile:
+        upload_data.Set("type", "file");
         upload_data.Set("file", element.path().value());
+        upload_data.Set("filePath", base::Value(element.path().AsUTF8Unsafe()));
+        upload_data.Set("offset", static_cast<int>(element.offset()));
+        upload_data.Set("length", static_cast<int>(element.length()));
+        upload_data.Set("modificationTime",
+                        element.expected_modification_time().ToDoubleT());
         break;
       case network::mojom::DataElementType::kBytes:
+        upload_data.Set("type", "rawData");
         upload_data.Set("bytes", node::Buffer::Copy(isolate, element.bytes(),
                                                     element.length())
                                      .ToLocalChecked());
         break;
       case network::mojom::DataElementType::kDataPipe: {
+        upload_data.Set("type", "blob");
         // TODO(zcbenz): After the NetworkService refactor, the old blobUUID API
         // becomes unecessarily complex, we should deprecate the getBlobData API
         // and return the DataPipeHolder wrapper directly.
@@ -286,10 +292,62 @@ v8::Local<v8::Value> Converter<network::ResourceRequestBody>::ToV8(
 }
 
 // static
+v8::Local<v8::Value>
+Converter<scoped_refptr<network::ResourceRequestBody>>::ToV8(
+    v8::Isolate* isolate,
+    const scoped_refptr<network::ResourceRequestBody>& val) {
+  if (!val)
+    return v8::Null(isolate);
+  return ConvertToV8(isolate, *val);
+}
+
+// static
+bool Converter<scoped_refptr<network::ResourceRequestBody>>::FromV8(
+    v8::Isolate* isolate,
+    v8::Local<v8::Value> val,
+    scoped_refptr<network::ResourceRequestBody>* out) {
+  auto list = std::make_unique<base::ListValue>();
+  if (!ConvertFromV8(isolate, val, list.get()))
+    return false;
+  *out = new network::ResourceRequestBody();
+  for (size_t i = 0; i < list->GetSize(); ++i) {
+    base::DictionaryValue* dict = nullptr;
+    std::string type;
+    if (!list->GetDictionary(i, &dict))
+      return false;
+    dict->GetString("type", &type);
+    if (type == "rawData") {
+      base::Value* bytes = nullptr;
+      dict->GetBinary("bytes", &bytes);
+      (*out)->AppendBytes(
+          reinterpret_cast<const char*>(bytes->GetBlob().data()),
+          base::checked_cast<int>(bytes->GetBlob().size()));
+    } else if (type == "file") {
+      std::string file;
+      int offset = 0, length = -1;
+      double modification_time = 0.0;
+      dict->GetStringWithoutPathExpansion("filePath", &file);
+      dict->GetInteger("offset", &offset);
+      dict->GetInteger("file", &length);
+      dict->GetDouble("modificationTime", &modification_time);
+      (*out)->AppendFileRange(base::FilePath::FromUTF8Unsafe(file),
+                              static_cast<uint64_t>(offset),
+                              static_cast<uint64_t>(length),
+                              base::Time::FromDoubleT(modification_time));
+    } else if (type == "blob") {
+      std::string uuid;
+      dict->GetString("blobUUID", &uuid);
+      (*out)->AppendBlob(uuid);
+    }
+  }
+  return true;
+}
+
+// static
 v8::Local<v8::Value> Converter<network::ResourceRequest>::ToV8(
     v8::Isolate* isolate,
     const network::ResourceRequest& val) {
-  gin::Dictionary dict(isolate, v8::Object::New(isolate));
+  gin::Dictionary dict = gin::Dictionary::CreateEmpty(isolate);
   dict.Set("method", val.method);
   dict.Set("url", val.url.spec());
   dict.Set("referrer", val.referrer.spec());
@@ -306,63 +364,38 @@ v8::Local<v8::Value> Converter<electron::VerifyRequestParams>::ToV8(
   gin::Dictionary dict = gin::Dictionary::CreateEmpty(isolate);
   dict.Set("hostname", val.hostname);
   dict.Set("certificate", val.certificate);
+  dict.Set("validatedCertificate", val.validated_certificate);
   dict.Set("verificationResult", val.default_result);
   dict.Set("errorCode", val.error_code);
   return ConvertToV8(isolate, dict);
 }
 
+// static
+v8::Local<v8::Value> Converter<net::HttpVersion>::ToV8(
+    v8::Isolate* isolate,
+    const net::HttpVersion& val) {
+  gin::Dictionary dict = gin::Dictionary::CreateEmpty(isolate);
+  dict.Set("major", static_cast<uint32_t>(val.major_value()));
+  dict.Set("minor", static_cast<uint32_t>(val.minor_value()));
+  return ConvertToV8(isolate, dict);
+}
+
+// static
+v8::Local<v8::Value> Converter<net::RedirectInfo>::ToV8(
+    v8::Isolate* isolate,
+    const net::RedirectInfo& val) {
+  gin::Dictionary dict = gin::Dictionary::CreateEmpty(isolate);
+
+  dict.Set("statusCode", val.status_code);
+  dict.Set("newMethod", val.new_method);
+  dict.Set("newUrl", val.new_url);
+  dict.Set("newSiteForCookies", val.new_site_for_cookies.RepresentativeUrl());
+  dict.Set("newReferrer", val.new_referrer);
+  dict.Set("insecureSchemeWasUpgraded", val.insecure_scheme_was_upgraded);
+  dict.Set("isSignedExchangeFallbackRedirect",
+           val.is_signed_exchange_fallback_redirect);
+
+  return ConvertToV8(isolate, dict);
+}
+
 }  // namespace gin
-
-namespace electron {
-
-void FillRequestDetails(base::DictionaryValue* details,
-                        const net::URLRequest* request) {
-  details->SetString("method", request->method());
-  std::string url;
-  if (!request->url_chain().empty())
-    url = request->url().spec();
-  details->SetKey("url", base::Value(url));
-  details->SetString("referrer", request->referrer());
-  auto list = std::make_unique<base::ListValue>();
-  GetUploadData(list.get(), request);
-  if (!list->empty())
-    details->Set("uploadData", std::move(list));
-  auto headers_value = std::make_unique<base::DictionaryValue>();
-  for (net::HttpRequestHeaders::Iterator it(request->extra_request_headers());
-       it.GetNext();) {
-    headers_value->SetString(it.name(), it.value());
-  }
-  details->Set("headers", std::move(headers_value));
-}
-
-void GetUploadData(base::ListValue* upload_data_list,
-                   const net::URLRequest* request) {
-  const net::UploadDataStream* upload_data = request->get_upload();
-  if (!upload_data)
-    return;
-  const std::vector<std::unique_ptr<net::UploadElementReader>>* readers =
-      upload_data->GetElementReaders();
-  for (const auto& reader : *readers) {
-    auto upload_data_dict = std::make_unique<base::DictionaryValue>();
-    if (reader->AsBytesReader()) {
-      const net::UploadBytesElementReader* bytes_reader =
-          reader->AsBytesReader();
-      auto bytes = std::make_unique<base::Value>(
-          std::vector<char>(bytes_reader->bytes(),
-                            bytes_reader->bytes() + bytes_reader->length()));
-      upload_data_dict->Set("bytes", std::move(bytes));
-    } else if (reader->AsFileReader()) {
-      const net::UploadFileElementReader* file_reader = reader->AsFileReader();
-      auto file_path = file_reader->path().AsUTF8Unsafe();
-      upload_data_dict->SetKey("file", base::Value(file_path));
-    }
-    // else {
-    //   const storage::UploadBlobElementReader* blob_reader =
-    //       static_cast<storage::UploadBlobElementReader*>(reader.get());
-    //   upload_data_dict->SetString("blobUUID", blob_reader->uuid());
-    // }
-    upload_data_list->Append(std::move(upload_data_dict));
-  }
-}
-
-}  // namespace electron

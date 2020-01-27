@@ -4,6 +4,8 @@
 
 #include "shell/browser/atom_browser_context.h"
 
+#include <memory>
+
 #include <utility>
 
 #include "base/command_line.h"
@@ -26,9 +28,12 @@
 #include "content/browser/blob_storage/chrome_blob_storage_context.h"  // nogncheck
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/storage_partition.h"
+#include "mojo/public/cpp/bindings/self_owned_receiver.h"
 #include "net/base/escape.h"
 #include "services/network/public/cpp/features.h"
 #include "services/network/public/cpp/wrapper_shared_url_loader_factory.h"
+#include "services/network/public/mojom/network_context.mojom.h"
+#include "shell/browser/api/atom_api_url_loader.h"
 #include "shell/browser/atom_browser_client.h"
 #include "shell/browser/atom_browser_main_parts.h"
 #include "shell/browser/atom_download_manager_delegate.h"
@@ -45,8 +50,6 @@
 #include "shell/common/options_switches.h"
 
 #if BUILDFLAG(ENABLE_ELECTRON_EXTENSIONS)
-#include "components/pref_registry/pref_registry_syncable.h"
-#include "components/user_prefs/user_prefs.h"
 #include "extensions/browser/browser_context_keyed_service_factories.h"
 #include "extensions/browser/extension_pref_store.h"
 #include "extensions/browser/extension_pref_value_map_factory.h"
@@ -59,6 +62,19 @@
 #include "shell/browser/extensions/atom_extensions_browser_client.h"
 #include "shell/common/extensions/atom_extensions_client.h"
 #endif  // BUILDFLAG(ENABLE_ELECTRON_EXTENSIONS)
+
+#if BUILDFLAG(ENABLE_ELECTRON_EXTENSIONS) || \
+    BUILDFLAG(ENABLE_BUILTIN_SPELLCHECKER)
+#include "components/pref_registry/pref_registry_syncable.h"
+#include "components/user_prefs/user_prefs.h"
+#endif
+
+#if BUILDFLAG(ENABLE_BUILTIN_SPELLCHECKER)
+#include "base/i18n/rtl.h"
+#include "components/language/core/browser/language_prefs.h"
+#include "components/spellcheck/browser/pref_names.h"
+#include "components/spellcheck/common/spellcheck_common.h"
+#endif
 
 using content::BrowserThread;
 
@@ -78,7 +94,7 @@ AtomBrowserContext::BrowserContextMap AtomBrowserContext::browser_context_map_;
 
 AtomBrowserContext::AtomBrowserContext(const std::string& partition,
                                        bool in_memory,
-                                       const base::DictionaryValue& options)
+                                       base::DictionaryValue options)
     : base::RefCountedDeleteOnSequence<AtomBrowserContext>(
           base::ThreadTaskRunnerHandle::Get()),
       in_memory_pref_store_(nullptr),
@@ -99,6 +115,7 @@ AtomBrowserContext::AtomBrowserContext(const std::string& partition,
     base::PathService::Get(DIR_APP_DATA, &path_);
     path_ = path_.Append(base::FilePath::FromUTF8Unsafe(GetApplicationName()));
     base::PathService::Override(DIR_USER_DATA, path_);
+    base::PathService::Override(chrome::DIR_USER_DATA, path_);
   }
 
   if (!in_memory && !partition.empty())
@@ -129,14 +146,13 @@ AtomBrowserContext::AtomBrowserContext(const std::string& partition,
 AtomBrowserContext::~AtomBrowserContext() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   NotifyWillBeDestroyed(this);
+  // Notify any keyed services of browser context destruction.
+  BrowserContextDependencyManager::GetInstance()->DestroyBrowserContextServices(
+      this);
   ShutdownStoragePartitions();
 
   BrowserThread::DeleteSoon(BrowserThread::IO, FROM_HERE,
                             std::move(resource_context_));
-
-  // Notify any keyed services of browser context destruction.
-  BrowserContextDependencyManager::GetInstance()->DestroyBrowserContextServices(
-      this);
 }
 
 void AtomBrowserContext::InitPrefs() {
@@ -153,7 +169,10 @@ void AtomBrowserContext::InitPrefs() {
       ExtensionPrefValueMapFactory::GetForBrowserContext(this),
       IsOffTheRecord());
   prefs_factory.set_extension_prefs(ext_pref_store);
+#endif
 
+#if BUILDFLAG(ENABLE_ELECTRON_EXTENSIONS) || \
+    BUILDFLAG(ENABLE_BUILTIN_SPELLCHECKER)
   auto registry = WrapRefCounted(new user_prefs::PrefRegistrySyncable);
 #else
   auto registry = WrapRefCounted(new PrefRegistrySimple);
@@ -174,12 +193,35 @@ void AtomBrowserContext::InitPrefs() {
   extensions::ExtensionPrefs::RegisterProfilePrefs(registry.get());
 #endif
 
+#if BUILDFLAG(ENABLE_BUILTIN_SPELLCHECKER)
+  BrowserContextDependencyManager::GetInstance()
+      ->RegisterProfilePrefsForServices(registry.get());
+
+  language::LanguagePrefs::RegisterProfilePrefs(registry.get());
+#endif
+
   prefs_ = prefs_factory.Create(
       registry.get(),
       std::make_unique<PrefStoreDelegate>(weak_factory_.GetWeakPtr()));
   prefs_->UpdateCommandLinePrefStore(new ValueMapPrefStore);
-#if BUILDFLAG(ENABLE_ELECTRON_EXTENSIONS)
+#if BUILDFLAG(ENABLE_ELECTRON_EXTENSIONS) || \
+    BUILDFLAG(ENABLE_BUILTIN_SPELLCHECKER)
   user_prefs::UserPrefs::Set(this, prefs_.get());
+#endif
+
+#if BUILDFLAG(ENABLE_BUILTIN_SPELLCHECKER)
+  auto* current_dictionaries =
+      prefs()->Get(spellcheck::prefs::kSpellCheckDictionaries);
+  // No configured dictionaries, the default will be en-US
+  if (current_dictionaries->GetList().size() == 0) {
+    std::string default_code = spellcheck::GetCorrespondingSpellCheckLanguage(
+        base::i18n::GetConfiguredLocale());
+    if (!default_code.empty()) {
+      base::ListValue language_codes;
+      language_codes.AppendString(default_code);
+      prefs()->Set(spellcheck::prefs::kSpellCheckDictionaries, language_codes);
+    }
+  }
 #endif
 }
 
@@ -205,13 +247,13 @@ int AtomBrowserContext::GetMaxCacheSize() const {
 
 content::ResourceContext* AtomBrowserContext::GetResourceContext() {
   if (!resource_context_)
-    resource_context_.reset(new content::ResourceContext);
+    resource_context_ = std::make_unique<content::ResourceContext>();
   return resource_context_.get();
 }
 
 std::string AtomBrowserContext::GetMediaDeviceIDSalt() {
   if (!media_device_id_salt_.get())
-    media_device_id_salt_.reset(new MediaDeviceIDSalt(prefs_.get()));
+    media_device_id_salt_ = std::make_unique<MediaDeviceIDSalt>(prefs_.get());
   return media_device_id_salt_->GetSalt();
 }
 
@@ -228,22 +270,22 @@ content::DownloadManagerDelegate*
 AtomBrowserContext::GetDownloadManagerDelegate() {
   if (!download_manager_delegate_.get()) {
     auto* download_manager = content::BrowserContext::GetDownloadManager(this);
-    download_manager_delegate_.reset(
-        new AtomDownloadManagerDelegate(download_manager));
+    download_manager_delegate_ =
+        std::make_unique<AtomDownloadManagerDelegate>(download_manager);
   }
   return download_manager_delegate_.get();
 }
 
 content::BrowserPluginGuestManager* AtomBrowserContext::GetGuestManager() {
   if (!guest_manager_)
-    guest_manager_.reset(new WebViewManager);
+    guest_manager_ = std::make_unique<WebViewManager>();
   return guest_manager_.get();
 }
 
 content::PermissionControllerDelegate*
 AtomBrowserContext::GetPermissionControllerDelegate() {
   if (!permission_manager_.get())
-    permission_manager_.reset(new AtomPermissionManager);
+    permission_manager_ = std::make_unique<AtomPermissionManager>();
   return permission_manager_.get();
 }
 
@@ -257,7 +299,8 @@ std::string AtomBrowserContext::GetUserAgent() const {
 
 predictors::PreconnectManager* AtomBrowserContext::GetPreconnectManager() {
   if (!preconnect_manager_.get()) {
-    preconnect_manager_.reset(new predictors::PreconnectManager(nullptr, this));
+    preconnect_manager_ =
+        std::make_unique<predictors::PreconnectManager>(nullptr, this);
   }
   return preconnect_manager_.get();
 }
@@ -267,21 +310,24 @@ AtomBrowserContext::GetURLLoaderFactory() {
   if (url_loader_factory_)
     return url_loader_factory_;
 
-  network::mojom::URLLoaderFactoryPtr network_factory;
-  mojo::PendingReceiver<network::mojom::URLLoaderFactory> factory_request =
-      mojo::MakeRequest(&network_factory);
+  mojo::PendingRemote<network::mojom::URLLoaderFactory> network_factory_remote;
+  mojo::PendingReceiver<network::mojom::URLLoaderFactory> factory_receiver =
+      network_factory_remote.InitWithNewPipeAndPassReceiver();
 
   // Consult the embedder.
-  network::mojom::TrustedURLLoaderHeaderClientPtrInfo header_client;
+  mojo::PendingRemote<network::mojom::TrustedURLLoaderHeaderClient>
+      header_client;
   static_cast<content::ContentBrowserClient*>(AtomBrowserClient::Get())
       ->WillCreateURLLoaderFactory(
           this, nullptr, -1,
           content::ContentBrowserClient::URLLoaderFactoryType::kNavigation,
-          url::Origin(), &factory_request, &header_client, nullptr);
+          url::Origin(), base::nullopt, &factory_receiver, &header_client,
+          nullptr, nullptr, nullptr);
 
   network::mojom::URLLoaderFactoryParamsPtr params =
       network::mojom::URLLoaderFactoryParams::New();
   params->header_client = std::move(header_client);
+  params->auth_client = auth_client_.BindNewPipeAndPassRemote();
   params->process_id = network::mojom::kBrowserProcessId;
   params->is_trusted = true;
   params->is_corb_enabled = false;
@@ -292,11 +338,45 @@ AtomBrowserContext::GetURLLoaderFactory() {
   auto* storage_partition =
       content::BrowserContext::GetDefaultStoragePartition(this);
   storage_partition->GetNetworkContext()->CreateURLLoaderFactory(
-      std::move(factory_request), std::move(params));
+      std::move(factory_receiver), std::move(params));
   url_loader_factory_ =
       base::MakeRefCounted<network::WrapperSharedURLLoaderFactory>(
-          std::move(network_factory));
+          std::move(network_factory_remote));
   return url_loader_factory_;
+}
+
+class AuthResponder : public network::mojom::TrustedAuthClient {
+ public:
+  AuthResponder() {}
+  ~AuthResponder() override = default;
+
+ private:
+  void OnAuthRequired(
+      const base::Optional<::base::UnguessableToken>& window_id,
+      uint32_t process_id,
+      uint32_t routing_id,
+      uint32_t request_id,
+      const ::GURL& url,
+      bool first_auth_attempt,
+      const ::net::AuthChallengeInfo& auth_info,
+      ::network::mojom::URLResponseHeadPtr head,
+      mojo::PendingRemote<network::mojom::AuthChallengeResponder>
+          auth_challenge_responder) override {
+    api::SimpleURLLoaderWrapper* url_loader =
+        api::SimpleURLLoaderWrapper::FromID(routing_id);
+    if (url_loader) {
+      url_loader->OnAuthRequired(url, first_auth_attempt, auth_info,
+                                 std::move(head),
+                                 std::move(auth_challenge_responder));
+    }
+  }
+};
+
+void AtomBrowserContext::OnLoaderCreated(
+    int32_t request_id,
+    mojo::PendingReceiver<network::mojom::TrustedAuthClient> auth_client) {
+  mojo::MakeSelfOwnedReceiver(std::make_unique<AuthResponder>(),
+                              std::move(auth_client));
 }
 
 content::PushMessagingService* AtomBrowserContext::GetPushMessagingService() {
@@ -327,6 +407,11 @@ AtomBrowserContext::GetClientHintsControllerDelegate() {
   return nullptr;
 }
 
+content::StorageNotificationService*
+AtomBrowserContext::GetStorageNotificationService() {
+  return nullptr;
+}
+
 void AtomBrowserContext::SetCorsOriginAccessListForOrigin(
     const url::Origin& source_origin,
     std::vector<network::mojom::CorsOriginPatternPtr> allow_patterns,
@@ -348,13 +433,14 @@ ResolveProxyHelper* AtomBrowserContext::GetResolveProxyHelper() {
 scoped_refptr<AtomBrowserContext> AtomBrowserContext::From(
     const std::string& partition,
     bool in_memory,
-    const base::DictionaryValue& options) {
+    base::DictionaryValue options) {
   PartitionKey key(partition, in_memory);
   auto* browser_context = browser_context_map_[key].get();
   if (browser_context)
     return scoped_refptr<AtomBrowserContext>(browser_context);
 
-  auto* new_context = new AtomBrowserContext(partition, in_memory, options);
+  auto* new_context =
+      new AtomBrowserContext(partition, in_memory, std::move(options));
   browser_context_map_[key] = new_context->GetWeakPtr();
   return scoped_refptr<AtomBrowserContext>(new_context);
 }

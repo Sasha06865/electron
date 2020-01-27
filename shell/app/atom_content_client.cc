@@ -15,9 +15,9 @@
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "content/public/common/content_constants.h"
-#include "content/public/common/pepper_plugin_info.h"
 #include "electron/buildflags/buildflags.h"
-#include "ppapi/shared_impl/ppapi_permissions.h"
+#include "extensions/common/constants.h"
+#include "ppapi/buildflags/buildflags.h"
 #include "shell/browser/atom_paths.h"
 #include "shell/common/options_switches.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -33,9 +33,15 @@
 #endif  // defined(WIDEVINE_CDM_AVAILABLE)
 
 #if BUILDFLAG(ENABLE_PDF_VIEWER)
-#include "pdf/pdf.h"
-#include "shell/common/atom_constants.h"
-#endif  // BUILDFLAG(ENABLE_PDF_VIEWER)
+#include "pdf/pdf.h"                      // nogncheck
+#include "pdf/pdf_ppapi.h"                // nogncheck
+#include "shell/common/atom_constants.h"  // nogncheck
+#endif                                    // BUILDFLAG(ENABLE_PDF_VIEWER)
+
+#if BUILDFLAG(ENABLE_PLUGINS)
+#include "content/public/common/pepper_plugin_info.h"
+#include "ppapi/shared_impl/ppapi_permissions.h"
+#endif  // BUILDFLAG(ENABLE_PLUGINS)
 
 namespace electron {
 
@@ -101,29 +107,27 @@ content::PepperPluginInfo CreatePepperFlashInfo(const base::FilePath& path,
   std::vector<std::string> flash_version_numbers = base::SplitString(
       version, ".", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
   if (flash_version_numbers.empty())
-    flash_version_numbers.push_back("11");
+    flash_version_numbers.emplace_back("11");
   // |SplitString()| puts in an empty string given an empty string. :(
   else if (flash_version_numbers[0].empty())
     flash_version_numbers[0] = "11";
   if (flash_version_numbers.size() < 2)
-    flash_version_numbers.push_back("2");
+    flash_version_numbers.emplace_back("2");
   if (flash_version_numbers.size() < 3)
-    flash_version_numbers.push_back("999");
+    flash_version_numbers.emplace_back("999");
   if (flash_version_numbers.size() < 4)
-    flash_version_numbers.push_back("999");
+    flash_version_numbers.emplace_back("999");
   // E.g., "Shockwave Flash 10.2 r154":
   plugin.description = plugin.name + " " + flash_version_numbers[0] + "." +
                        flash_version_numbers[1] + " r" +
                        flash_version_numbers[2];
   plugin.version = base::JoinString(flash_version_numbers, ".");
-  content::WebPluginMimeType swf_mime_type(content::kFlashPluginSwfMimeType,
-                                           content::kFlashPluginSwfExtension,
-                                           content::kFlashPluginSwfDescription);
-  plugin.mime_types.push_back(swf_mime_type);
-  content::WebPluginMimeType spl_mime_type(content::kFlashPluginSplMimeType,
-                                           content::kFlashPluginSplExtension,
-                                           content::kFlashPluginSplDescription);
-  plugin.mime_types.push_back(spl_mime_type);
+  plugin.mime_types.emplace_back(content::kFlashPluginSwfMimeType,
+                                 content::kFlashPluginSwfExtension,
+                                 content::kFlashPluginSwfDescription);
+  plugin.mime_types.emplace_back(content::kFlashPluginSplMimeType,
+                                 content::kFlashPluginSplExtension,
+                                 content::kFlashPluginSplDescription);
 
   return plugin;
 }
@@ -143,6 +147,7 @@ void AddPepperFlashFromCommandLine(
 }
 #endif  // BUILDFLAG(ENABLE_PEPPER_FLASH)
 
+#if BUILDFLAG(ENABLE_PLUGINS)
 void ComputeBuiltInPlugins(std::vector<content::PepperPluginInfo>* plugins) {
 #if BUILDFLAG(ENABLE_PDF_VIEWER)
   content::PepperPluginInfo pdf_info;
@@ -150,7 +155,7 @@ void ComputeBuiltInPlugins(std::vector<content::PepperPluginInfo>* plugins) {
   pdf_info.is_out_of_process = true;
   pdf_info.name = "Chromium PDF Viewer";
   pdf_info.description = "Portable Document Format";
-  pdf_info.path = base::FilePath::FromUTF8Unsafe(kPdfPluginPath);
+  pdf_info.path = base::FilePath(FILE_PATH_LITERAL("internal-pdf-viewer"));
   content::WebPluginMimeType pdf_mime_type(kPdfPluginMimeType, "pdf",
                                            "Portable Document Format");
   pdf_info.mime_types.push_back(pdf_mime_type);
@@ -159,10 +164,11 @@ void ComputeBuiltInPlugins(std::vector<content::PepperPluginInfo>* plugins) {
       chrome_pdf::PPP_InitializeModule;
   pdf_info.internal_entry_points.shutdown_module =
       chrome_pdf::PPP_ShutdownModule;
-  pdf_info.permissions = ppapi::PERMISSION_PRIVATE | ppapi::PERMISSION_DEV;
+  pdf_info.permissions = ppapi::PERMISSION_PDF | ppapi::PERMISSION_DEV;
   plugins->push_back(pdf_info);
 #endif  // BUILDFLAG(ENABLE_PDF_VIEWER)
 }
+#endif  // BUILDFLAG(ENABLE_PLUGINS)
 
 void AppendDelimitedSwitchToVector(const base::StringPiece cmd_switch,
                                    std::vector<std::string>* append_me) {
@@ -181,9 +187,9 @@ void AppendDelimitedSwitchToVector(const base::StringPiece cmd_switch,
 
 }  // namespace
 
-AtomContentClient::AtomContentClient() {}
+AtomContentClient::AtomContentClient() = default;
 
-AtomContentClient::~AtomContentClient() {}
+AtomContentClient::~AtomContentClient() = default;
 
 base::string16 AtomContentClient::GetLocalizedString(int message_id) {
   return l10n_util::GetStringUTF16(message_id);
@@ -219,8 +225,8 @@ void AtomContentClient::AddAdditionalSchemes(Schemes* schemes) {
   AppendDelimitedSwitchToVector(switches::kCORSSchemes,
                                 &schemes->cors_enabled_schemes);
 
-  schemes->service_worker_schemes.push_back(url::kFileScheme);
-  schemes->standard_schemes.push_back("chrome-extension");
+  schemes->service_worker_schemes.emplace_back(url::kFileScheme);
+  schemes->standard_schemes.emplace_back(extensions::kExtensionScheme);
 }
 
 void AtomContentClient::AddPepperPlugins(
@@ -229,7 +235,9 @@ void AtomContentClient::AddPepperPlugins(
   base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
   AddPepperFlashFromCommandLine(command_line, plugins);
 #endif  // BUILDFLAG(ENABLE_PEPPER_FLASH)
+#if BUILDFLAG(ENABLE_PLUGINS)
   ComputeBuiltInPlugins(plugins);
+#endif  // BUILDFLAG(ENABLE_PLUGINS)
 }
 
 void AtomContentClient::AddContentDecryptionModules(

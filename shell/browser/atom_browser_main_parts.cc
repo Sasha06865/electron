@@ -4,6 +4,8 @@
 
 #include "shell/browser/atom_browser_main_parts.h"
 
+#include <memory>
+
 #include <utility>
 
 #if defined(OS_LINUX)
@@ -20,19 +22,17 @@
 #include "chrome/browser/icon_manager.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/child_process_security_policy.h"
+#include "content/public/browser/device_service.h"
 #include "content/public/browser/web_ui_controller_factory.h"
 #include "content/public/common/content_features.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/result_codes.h"
-#include "content/public/common/service_manager_connection.h"
 #include "electron/buildflags/buildflags.h"
 #include "media/base/localized_strings.h"
-#include "services/device/public/mojom/constants.mojom.h"
 #include "services/network/public/cpp/features.h"
-#include "services/service_manager/public/cpp/connector.h"
+#include "services/tracing/public/cpp/stack_sampling/tracing_sampler_profiler.h"
 #include "shell/app/atom_main_delegate.h"
 #include "shell/browser/api/atom_api_app.h"
-#include "shell/browser/api/trackable_object.h"
 #include "shell/browser/atom_browser_client.h"
 #include "shell/browser/atom_browser_context.h"
 #include "shell/browser/atom_paths.h"
@@ -47,6 +47,7 @@
 #include "shell/common/api/electron_bindings.h"
 #include "shell/common/application_info.h"
 #include "shell/common/asar/asar_util.h"
+#include "shell/common/gin_helper/trackable_object.h"
 #include "shell/common/node_bindings.h"
 #include "shell/common/node_includes.h"
 #include "ui/base/idle/idle.h"
@@ -100,6 +101,10 @@
 #include "shell/browser/extensions/atom_extensions_browser_client.h"
 #include "shell/common/extensions/atom_extensions_client.h"
 #endif  // BUILDFLAG(ENABLE_ELECTRON_EXTENSIONS)
+
+#if BUILDFLAG(ENABLE_BUILTIN_SPELLCHECKER)
+#include "chrome/browser/spellchecker/spellcheck_factory.h"  // nogncheck
+#endif
 
 namespace electron {
 
@@ -219,9 +224,6 @@ AtomBrowserMainParts::AtomBrowserMainParts(
       electron_bindings_(new ElectronBindings(uv_default_loop())) {
   DCHECK(!self_) << "Cannot have two AtomBrowserMainParts";
   self_ = this;
-  // Register extension scheme as web safe scheme.
-  content::ChildProcessSecurityPolicy::GetInstance()->RegisterWebSafeScheme(
-      "chrome-extension");
 }
 
 AtomBrowserMainParts::~AtomBrowserMainParts() {
@@ -289,13 +291,13 @@ void AtomBrowserMainParts::PostEarlyInitialization() {
 
   // The ProxyResolverV8 has setup a complete V8 environment, in order to
   // avoid conflicts we only initialize our V8 environment after that.
-  js_env_.reset(new JavascriptEnvironment(node_bindings_->uv_loop()));
+  js_env_ = std::make_unique<JavascriptEnvironment>(node_bindings_->uv_loop());
 
   node_bindings_->Initialize();
   // Create the global environment.
   node::Environment* env = node_bindings_->CreateEnvironment(
       js_env_->context(), js_env_->platform(), false);
-  node_env_.reset(new NodeEnvironment(env));
+  node_env_ = std::make_unique<NodeEnvironment>(env);
 
   /**
    * 🚨  🚨  🚨  🚨  🚨  🚨  🚨  🚨  🚨
@@ -316,7 +318,7 @@ void AtomBrowserMainParts::PostEarlyInitialization() {
    */
 
   // Enable support for v8 inspector
-  node_debugger_.reset(new NodeDebugger(env));
+  node_debugger_ = std::make_unique<NodeDebugger>(env);
   node_debugger_->Start();
 
   // Only run the node bootstrapper after we have initialized the inspector
@@ -362,7 +364,7 @@ int AtomBrowserMainParts::PreCreateThreads() {
 #endif
 
   if (!views::LayoutProvider::Get())
-    layout_provider_.reset(new views::LayoutProvider());
+    layout_provider_ = std::make_unique<views::LayoutProvider>();
 
   // Initialize the app locale.
   fake_browser_process_->SetApplicationLocale(
@@ -381,6 +383,12 @@ int AtomBrowserMainParts::PreCreateThreads() {
   fake_browser_process_->PreCreateThreads();
 
   return 0;
+}
+
+void AtomBrowserMainParts::PostCreateThreads() {
+  base::PostTask(
+      FROM_HERE, {content::BrowserThread::IO},
+      base::BindOnce(&tracing::TracingSamplerProfiler::CreateOnChildThread));
 }
 
 void AtomBrowserMainParts::PostDestroyThreads() {
@@ -403,7 +411,7 @@ void AtomBrowserMainParts::ToolkitInitialized() {
 #endif
 
 #if defined(USE_AURA)
-  wm_state_.reset(new wm::WMState);
+  wm_state_ = std::make_unique<wm::WMState>();
 #endif
 
 #if defined(OS_WIN)
@@ -418,7 +426,7 @@ void AtomBrowserMainParts::ToolkitInitialized() {
 #if defined(OS_MACOSX)
   views_delegate_.reset(new ViewsDelegateMac);
 #else
-  views_delegate_.reset(new ViewsDelegate);
+  views_delegate_ = std::make_unique<ViewsDelegate>();
 #endif
 }
 
@@ -440,8 +448,9 @@ void AtomBrowserMainParts::PreMainMessageLoopRun() {
   extensions::electron::EnsureBrowserContextKeyedServiceFactoriesBuilt();
 #endif
 
-  // url::Add*Scheme are not threadsafe, this helps prevent data races.
-  url::LockSchemeRegistries();
+#if BUILDFLAG(ENABLE_BUILTIN_SPELLCHECKER)
+  SpellcheckServiceFactory::GetInstance();
+#endif
 
 #if defined(USE_X11)
   ui::TouchFactory::SetTouchDeviceListFromCommandLine();
@@ -534,30 +543,25 @@ void AtomBrowserMainParts::PreMainMessageLoopStart() {
 
 void AtomBrowserMainParts::PreMainMessageLoopStartCommon() {
 #if defined(OS_MACOSX)
-  InitializeEmptyApplicationMenu();
+  InitializeMainNib();
+  RegisterURLHandler();
 #endif
   media::SetLocalizedStringProvider(MediaStringProvider);
 }
 
 device::mojom::GeolocationControl*
 AtomBrowserMainParts::GetGeolocationControl() {
-  if (geolocation_control_)
-    return geolocation_control_.get();
-
-  auto request = mojo::MakeRequest(&geolocation_control_);
-  if (!content::ServiceManagerConnection::GetForProcess())
-    return geolocation_control_.get();
-
-  service_manager::Connector* connector =
-      content::ServiceManagerConnection::GetForProcess()->GetConnector();
-  connector->BindInterface(device::mojom::kServiceName, std::move(request));
+  if (!geolocation_control_) {
+    content::GetDeviceService().BindGeolocationControl(
+        geolocation_control_.BindNewPipeAndPassReceiver());
+  }
   return geolocation_control_.get();
 }
 
 IconManager* AtomBrowserMainParts::GetIconManager() {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   if (!icon_manager_.get())
-    icon_manager_.reset(new IconManager);
+    icon_manager_ = std::make_unique<IconManager>();
   return icon_manager_.get();
 }
 

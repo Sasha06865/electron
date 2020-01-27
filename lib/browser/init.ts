@@ -151,9 +151,17 @@ app._setDefaultAppPaths(packagePath)
 // Load the chrome devtools support.
 require('@electron/internal/browser/devtools')
 
+const features = process.electronBinding('features')
+
 // Load the chrome extension support.
-if (!process.electronBinding('features').isExtensionsEnabled()) {
+if (features.isExtensionsEnabled()) {
+  require('@electron/internal/browser/chrome-extension-shim')
+} else {
   require('@electron/internal/browser/chrome-extension')
+}
+
+if (features.isRemoteModuleEnabled()) {
+  require('@electron/internal/browser/remote/server')
 }
 
 // Load protocol module to ensure it is populated on app ready
@@ -189,13 +197,14 @@ app.on('window-all-closed', () => {
   }
 })
 
-Promise.all([
-  import('@electron/internal/browser/default-menu'),
-  app.whenReady()
-]).then(([{ setDefaultApplicationMenu }]) => {
-  // Create default menu
-  setDefaultApplicationMenu()
-})
+const { setDefaultApplicationMenu } = require('@electron/internal/browser/default-menu')
+
+// Create default menu.
+//
+// Note that the task must be added before loading any app, so we can make sure
+// the call is maded before any user window is created, otherwise the default
+// menu may show even when user explicitly hides the menu.
+app.once('ready', setDefaultApplicationMenu)
 
 if (packagePath) {
   // Finally load app's main.js and transfer control to C++.

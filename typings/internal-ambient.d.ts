@@ -4,6 +4,7 @@ declare namespace NodeJS {
   interface FeaturesBinding {
     isDesktopCapturerEnabled(): boolean;
     isOffscreenRenderingEnabled(): boolean;
+    isRemoteModuleEnabled(): boolean;
     isPDFViewerEnabled(): boolean;
     isRunAsNodeEnabled(): boolean;
     isFakeLocationProviderEnabled(): boolean;
@@ -28,6 +29,9 @@ declare namespace NodeJS {
     setHiddenValue<T>(obj: any, key: string, value: T): void;
     deleteHiddenValue(obj: any, key: string): void;
     requestGarbageCollectionForTesting(): void;
+    createIDWeakMap<V>(): ElectronInternal.KeyWeakMap<number, V>;
+    createDoubleIDWeakMap<V>(): ElectronInternal.KeyWeakMap<[string, number], V>;
+    setRemoteCallbackFreer(fn: Function, frameId: number, contextId: String, id: number, sender: any): void
   }
 
   interface Process {

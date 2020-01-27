@@ -12,15 +12,15 @@
 #include "content/public/renderer/render_frame_observer.h"
 #include "content/public/renderer/render_frame_visitor.h"
 #include "content/public/renderer/render_view.h"
-#include "native_mate/dictionary.h"
 #include "services/service_manager/public/cpp/interface_provider.h"
 #include "shell/common/api/api.mojom.h"
-#include "shell/common/native_mate_converters/blink_converter.h"
-#include "shell/common/native_mate_converters/gfx_converter.h"
-#include "shell/common/native_mate_converters/string16_converter.h"
+#include "shell/common/gin_converters/blink_converter.h"
+#include "shell/common/gin_helper/dictionary.h"
+#include "shell/common/gin_helper/promise.h"
 #include "shell/common/node_includes.h"
-#include "shell/common/promise_util.h"
 #include "shell/renderer/api/atom_api_spell_check_client.h"
+#include "third_party/blink/public/common/page/page_zoom.h"
+#include "third_party/blink/public/common/web_cache/web_cache_resource_type_stats.h"
 #include "third_party/blink/public/platform/web_cache.h"
 #include "third_party/blink/public/platform/web_isolated_world_info.h"
 #include "third_party/blink/public/web/web_custom_element.h"
@@ -35,7 +35,7 @@
 #include "third_party/blink/public/web/web_view.h"
 #include "url/url_util.h"
 
-namespace mate {
+namespace gin {
 
 template <>
 struct Converter<blink::WebLocalFrame::ScriptExecutionType> {
@@ -77,7 +77,7 @@ struct Converter<blink::WebDocument::CSSOrigin> {
   }
 };
 
-}  // namespace mate
+}  // namespace gin
 
 namespace electron {
 
@@ -96,11 +96,11 @@ content::RenderFrame* GetRenderFrame(v8::Local<v8::Value> value) {
   return content::RenderFrame::FromWebFrame(frame);
 }
 
-class RenderFrameStatus : public content::RenderFrameObserver {
+class RenderFrameStatus final : public content::RenderFrameObserver {
  public:
   explicit RenderFrameStatus(content::RenderFrame* render_frame)
       : content::RenderFrameObserver(render_frame) {}
-  ~RenderFrameStatus() final {}
+  ~RenderFrameStatus() final = default;
 
   bool is_ok() { return render_frame() != nullptr; }
 
@@ -111,9 +111,9 @@ class RenderFrameStatus : public content::RenderFrameObserver {
 class ScriptExecutionCallback : public blink::WebScriptExecutionCallback {
  public:
   explicit ScriptExecutionCallback(
-      electron::util::Promise<v8::Local<v8::Value>> promise)
+      gin_helper::Promise<v8::Local<v8::Value>> promise)
       : promise_(std::move(promise)) {}
-  ~ScriptExecutionCallback() override {}
+  ~ScriptExecutionCallback() override = default;
 
   void Completed(
       const blink::WebVector<v8::Local<v8::Value>>& result) override {
@@ -135,7 +135,7 @@ class ScriptExecutionCallback : public blink::WebScriptExecutionCallback {
   }
 
  private:
-  electron::util::Promise<v8::Local<v8::Value>> promise_;
+  gin_helper::Promise<v8::Local<v8::Value>> promise_;
 
   DISALLOW_COPY_AND_ASSIGN(ScriptExecutionCallback);
 };
@@ -165,7 +165,7 @@ class FrameSetSpellChecker : public content::RenderFrameVisitor {
   DISALLOW_COPY_AND_ASSIGN(FrameSetSpellChecker);
 };
 
-class SpellCheckerHolder : public content::RenderFrameObserver {
+class SpellCheckerHolder final : public content::RenderFrameObserver {
  public:
   // Find existing holder for the |render_frame|.
   static SpellCheckerHolder* FromRenderFrame(
@@ -249,11 +249,11 @@ double GetZoomLevel(v8::Local<v8::Value> window) {
 }
 
 void SetZoomFactor(v8::Local<v8::Value> window, double factor) {
-  SetZoomLevel(window, blink::WebView::ZoomFactorToZoomLevel(factor));
+  SetZoomLevel(window, blink::PageZoomFactorToZoomLevel(factor));
 }
 
 double GetZoomFactor(v8::Local<v8::Value> window) {
-  return blink::WebView::ZoomLevelToZoomFactor(GetZoomLevel(window));
+  return blink::PageZoomLevelToZoomFactor(GetZoomLevel(window));
 }
 
 void SetVisualZoomLevelLimits(v8::Local<v8::Value> window,
@@ -262,13 +262,6 @@ void SetVisualZoomLevelLimits(v8::Local<v8::Value> window,
   blink::WebFrame* web_frame = GetRenderFrame(window)->GetWebFrame();
   web_frame->View()->SetDefaultPageScaleLimits(min_level, max_level);
   web_frame->View()->SetIgnoreViewportTagScaleLimits(true);
-}
-
-void SetLayoutZoomLevelLimits(v8::Local<v8::Value> window,
-                              double min_level,
-                              double max_level) {
-  blink::WebFrame* web_frame = GetRenderFrame(window)->GetWebFrame();
-  web_frame->View()->ZoomLimitsChanged(min_level, max_level);
 }
 
 void AllowGuestViewElementDefinition(v8::Isolate* isolate,
@@ -303,12 +296,12 @@ int GetWebFrameId(v8::Local<v8::Value> window,
   return render_frame->GetRoutingID();
 }
 
-void SetSpellCheckProvider(mate::Arguments* args,
+void SetSpellCheckProvider(gin_helper::Arguments* args,
                            v8::Local<v8::Value> window,
                            const std::string& language,
                            v8::Local<v8::Object> provider) {
   auto context = args->isolate()->GetCurrentContext();
-  if (!provider->Has(context, mate::StringToV8(args->isolate(), "spellCheck"))
+  if (!provider->Has(context, gin::StringToV8(args->isolate(), "spellCheck"))
            .ToChecked()) {
     args->ThrowError("\"spellCheck\" has to be defined");
     return;
@@ -344,11 +337,11 @@ void InsertText(v8::Local<v8::Value> window, const std::string& text) {
 
 base::string16 InsertCSS(v8::Local<v8::Value> window,
                          const std::string& css,
-                         mate::Arguments* args) {
+                         gin_helper::Arguments* args) {
   blink::WebDocument::CSSOrigin css_origin =
       blink::WebDocument::CSSOrigin::kAuthorOrigin;
 
-  mate::Dictionary options;
+  gin_helper::Dictionary options;
   if (args->GetNext(&options))
     options.Get("cssOrigin", &css_origin);
 
@@ -370,11 +363,11 @@ void RemoveInsertedCSS(v8::Local<v8::Value> window, const base::string16& key) {
   }
 }
 
-v8::Local<v8::Promise> ExecuteJavaScript(mate::Arguments* args,
+v8::Local<v8::Promise> ExecuteJavaScript(gin_helper::Arguments* args,
                                          v8::Local<v8::Value> window,
                                          const base::string16& code) {
   v8::Isolate* isolate = args->isolate();
-  util::Promise<v8::Local<v8::Value>> promise(isolate);
+  gin_helper::Promise<v8::Local<v8::Value>> promise(isolate);
   v8::Local<v8::Promise> handle = promise.GetHandle();
 
   bool has_user_gesture = false;
@@ -388,12 +381,12 @@ v8::Local<v8::Promise> ExecuteJavaScript(mate::Arguments* args,
 }
 
 v8::Local<v8::Promise> ExecuteJavaScriptInIsolatedWorld(
-    mate::Arguments* args,
+    gin_helper::Arguments* args,
     v8::Local<v8::Value> window,
     int world_id,
-    const std::vector<mate::Dictionary>& scripts) {
+    const std::vector<gin_helper::Dictionary>& scripts) {
   v8::Isolate* isolate = args->isolate();
-  util::Promise<v8::Local<v8::Value>> promise(isolate);
+  gin_helper::Promise<v8::Local<v8::Value>> promise(isolate);
   v8::Local<v8::Promise> handle = promise.GetHandle();
 
   std::vector<blink::WebScriptSource> sources;
@@ -434,8 +427,8 @@ v8::Local<v8::Promise> ExecuteJavaScriptInIsolatedWorld(
 
 void SetIsolatedWorldInfo(v8::Local<v8::Value> window,
                           int world_id,
-                          const mate::Dictionary& options,
-                          mate::Arguments* args) {
+                          const gin_helper::Dictionary& options,
+                          gin_helper::Arguments* args) {
   std::string origin_url, security_policy, name;
   options.Get("securityOrigin", &origin_url);
   options.Get("csp", &security_policy);
@@ -455,8 +448,8 @@ void SetIsolatedWorldInfo(v8::Local<v8::Value> window,
   GetRenderFrame(window)->GetWebFrame()->SetIsolatedWorldInfo(world_id, info);
 }
 
-blink::WebCache::ResourceTypeStats GetResourceUsage(v8::Isolate* isolate) {
-  blink::WebCache::ResourceTypeStats stats;
+blink::WebCacheResourceTypeStats GetResourceUsage(v8::Isolate* isolate) {
+  blink::WebCacheResourceTypeStats stats;
   blink::WebCache::GetResourceTypeStats(&stats);
   return stats;
 }
@@ -569,14 +562,13 @@ void Initialize(v8::Local<v8::Object> exports,
   using namespace electron::api;  // NOLINT(build/namespaces)
 
   v8::Isolate* isolate = context->GetIsolate();
-  mate::Dictionary dict(isolate, exports);
+  gin_helper::Dictionary dict(isolate, exports);
   dict.SetMethod("setName", &SetName);
   dict.SetMethod("setZoomLevel", &SetZoomLevel);
   dict.SetMethod("getZoomLevel", &GetZoomLevel);
   dict.SetMethod("setZoomFactor", &SetZoomFactor);
   dict.SetMethod("getZoomFactor", &GetZoomFactor);
   dict.SetMethod("setVisualZoomLevelLimits", &SetVisualZoomLevelLimits);
-  dict.SetMethod("setLayoutZoomLevelLimits", &SetLayoutZoomLevelLimits);
   dict.SetMethod("allowGuestViewElementDefinition",
                  &AllowGuestViewElementDefinition);
   dict.SetMethod("getWebFrameId", &GetWebFrameId);

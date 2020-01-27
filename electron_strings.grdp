@@ -13,7 +13,7 @@
 
   <!-- Desktop Capturer API -->
   <message name="IDS_DESKTOP_MEDIA_PICKER_SINGLE_SCREEN_NAME" desc="Name for screens in the desktop media picker UI when there is only one monitor.">
-    Entire screen
+    Entire Screen
   </message>
   <message name="IDS_DESKTOP_MEDIA_PICKER_MULTIPLE_SCREEN_NAME" desc="Name for screens in the desktop media picker UI when there are multiple monitors.">
     {SCREEN_INDEX, plural, =1{Screen #} other{Screen #}}
@@ -68,5 +68,11 @@
   </message>
   <message name="IDS_PICTURE_IN_PICTURE_PREVIOUS_TRACK_CONTROL_ACCESSIBLE_TEXT" desc="Accessible text label used for the controls button in the Picture-in-Picture window. The button invokes previous track action.">
     Previous track
+  </message>
+  <message name="IDS_SPELLCHECK_DICTIONARY" use_name_for_id="true">
+    en-US
+  </message>
+  <message name="IDS_ACCEPT_LANGUAGES" use_name_for_id="true">
+    en-US,en
   </message>
 </grit-part>

@@ -12,11 +12,12 @@
 
 namespace electron {
 
-NodeStreamLoader::NodeStreamLoader(network::ResourceResponseHead head,
-                                   network::mojom::URLLoaderRequest loader,
-                                   network::mojom::URLLoaderClientPtr client,
-                                   v8::Isolate* isolate,
-                                   v8::Local<v8::Object> emitter)
+NodeStreamLoader::NodeStreamLoader(
+    network::mojom::URLResponseHeadPtr head,
+    network::mojom::URLLoaderRequest loader,
+    mojo::PendingRemote<network::mojom::URLLoaderClient> client,
+    v8::Isolate* isolate,
+    v8::Local<v8::Object> emitter)
     : binding_(this, std::move(loader)),
       client_(std::move(client)),
       isolate_(isolate),
@@ -26,10 +27,7 @@ NodeStreamLoader::NodeStreamLoader(network::ResourceResponseHead head,
       base::BindOnce(&NodeStreamLoader::NotifyComplete,
                      weak_factory_.GetWeakPtr(), net::ERR_FAILED));
 
-  // PostTask since it might destruct.
-  base::SequencedTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::BindOnce(&NodeStreamLoader::Start,
-                                weak_factory_.GetWeakPtr(), std::move(head)));
+  Start(std::move(head));
 }
 
 NodeStreamLoader::~NodeStreamLoader() {
@@ -44,13 +42,9 @@ NodeStreamLoader::~NodeStreamLoader() {
     node::MakeCallback(isolate_, emitter_.Get(isolate_), "removeListener",
                        node::arraysize(args), args, {0, 0});
   }
-
-  // Release references.
-  emitter_.Reset();
-  buffer_.Reset();
 }
 
-void NodeStreamLoader::Start(network::ResourceResponseHead head) {
+void NodeStreamLoader::Start(network::mojom::URLResponseHeadPtr head) {
   mojo::ScopedDataPipeProducerHandle producer;
   mojo::ScopedDataPipeConsumerHandle consumer;
   MojoResult rv = mojo::CreateDataPipe(nullptr, &producer, &consumer);
@@ -60,8 +54,7 @@ void NodeStreamLoader::Start(network::ResourceResponseHead head) {
   }
 
   producer_ = std::make_unique<mojo::DataPipeProducer>(std::move(producer));
-
-  client_->OnReceiveResponse(head);
+  client_->OnReceiveResponse(std::move(head));
   client_->OnStartLoadingResponseBody(std::move(consumer));
 
   auto weak = weak_factory_.GetWeakPtr();
@@ -91,16 +84,27 @@ void NodeStreamLoader::NotifyComplete(int result) {
 }
 
 void NodeStreamLoader::ReadMore() {
+  if (is_reading_) {
+    // Calling read() can trigger the "readable" event again, making this
+    // function re-entrant. If we're already reading, we don't want to start
+    // a nested read, so short-circuit.
+    return;
+  }
   is_reading_ = true;
+  auto weak = weak_factory_.GetWeakPtr();
   // buffer = emitter.read()
   v8::MaybeLocal<v8::Value> ret = node::MakeCallback(
       isolate_, emitter_.Get(isolate_), "read", 0, nullptr, {0, 0});
+  DCHECK(weak) << "We shouldn't have been destroyed when calling read()";
 
   // If there is no buffer read, wait until |readable| is emitted again.
   v8::Local<v8::Value> buffer;
   if (!ret.ToLocal(&buffer) || !node::Buffer::HasInstance(buffer)) {
     readable_ = false;
     is_reading_ = false;
+    if (ended_) {
+      NotifyComplete(result_);
+    }
     return;
   }
 
@@ -110,13 +114,12 @@ void NodeStreamLoader::ReadMore() {
   // Write buffer to mojo pipe asyncronously.
   is_reading_ = false;
   is_writing_ = true;
-  producer_->Write(
-      std::make_unique<mojo::StringDataSource>(
-          base::StringPiece(node::Buffer::Data(buffer),
-                            node::Buffer::Length(buffer)),
-          mojo::StringDataSource::AsyncWritingMode::
-              STRING_STAYS_VALID_UNTIL_COMPLETION),
-      base::BindOnce(&NodeStreamLoader::DidWrite, weak_factory_.GetWeakPtr()));
+  producer_->Write(std::make_unique<mojo::StringDataSource>(
+                       base::StringPiece(node::Buffer::Data(buffer),
+                                         node::Buffer::Length(buffer)),
+                       mojo::StringDataSource::AsyncWritingMode::
+                           STRING_STAYS_VALID_UNTIL_COMPLETION),
+                   base::BindOnce(&NodeStreamLoader::DidWrite, weak));
 }
 
 void NodeStreamLoader::DidWrite(MojoResult result) {

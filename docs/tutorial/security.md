@@ -163,7 +163,7 @@ for an attacker to harm your users should they gain the ability to execute
 JavaScript on your website.
 
 After this, you can grant additional permissions for specific hosts. For example,
-if you are opening a BrowserWindow pointed at `https://example.com/", you can
+if you are opening a BrowserWindow pointed at `https://example.com/`, you can
 give that website exactly the abilities it needs, but no more.
 
 ### Why?
@@ -241,7 +241,7 @@ prevent the use of Node primitives, `contextIsolation` must also be used.
 
 ### Why?
 
-Context isolation allows each the scripts on running in the renderer to make
+Context isolation allows each of the scripts running in the renderer to make
 changes to its JavaScript environment without worrying about conflicting with
 the scripts in the Electron API or the preload script.
 
@@ -421,8 +421,6 @@ on a page directly in the markup using a `<meta>` tag:
 ```html
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'">
 ```
-
-#### `webRequest.onHeadersReceived([filter, ]listener)`
 
 
 ## 7) Do Not Set `allowRunningInsecureContent` to `true`
@@ -824,10 +822,6 @@ app.on('remote-get-current-window', (event, webContents) => {
 })
 
 app.on('remote-get-current-web-contents', (event, webContents) => {
-  event.preventDefault()
-})
-
-app.on('remote-get-guest-web-contents', (event, webContents, guestWebContents) => {
   event.preventDefault()
 })
 ```

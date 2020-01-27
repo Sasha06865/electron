@@ -13,6 +13,7 @@
 #include "base/macros.h"
 #include "build/build_config.h"
 #include "extensions/browser/extensions_browser_client.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
 
 class PrefService;
 
@@ -20,6 +21,7 @@ namespace extensions {
 class ExtensionsAPIClient;
 class KioskDelegate;
 class ProcessManagerDelegate;
+class ElectronProcessManagerDelegate;
 class ProcessMap;
 }  // namespace extensions
 
@@ -59,11 +61,11 @@ class AtomExtensionsBrowserClient : public extensions::ExtensionsBrowserClient {
       int* resource_id) const override;
   void LoadResourceFromResourceBundle(
       const network::ResourceRequest& request,
-      network::mojom::URLLoaderRequest loader,
+      mojo::PendingReceiver<network::mojom::URLLoader> loader,
       const base::FilePath& resource_relative_path,
       int resource_id,
       const std::string& content_security_policy,
-      network::mojom::URLLoaderClientPtr client,
+      mojo::PendingRemote<network::mojom::URLLoaderClient> client,
       bool send_cors_header) override;
   bool AllowCrossRendererResourceLoad(
       const GURL& url,
@@ -105,7 +107,8 @@ class AtomExtensionsBrowserClient : public extensions::ExtensionsBrowserClient {
   void BroadcastEventToRenderers(
       extensions::events::HistogramValue histogram_value,
       const std::string& event_name,
-      std::unique_ptr<base::ListValue> args) override;
+      std::unique_ptr<base::ListValue> args,
+      bool dispatch_to_off_the_record_profiles) override;
   extensions::ExtensionCache* GetExtensionCache() override;
   bool IsBackgroundUpdateAllowed() override;
   bool IsMinBrowserVersionSupported(const std::string& min_version) override;
@@ -115,6 +118,10 @@ class AtomExtensionsBrowserClient : public extensions::ExtensionsBrowserClient {
   bool IsLockScreenContext(content::BrowserContext* context) override;
   std::string GetApplicationLocale() override;
   std::string GetUserAgent() const override;
+  void RegisterBrowserInterfaceBindersForFrame(
+      service_manager::BinderMapWithContext<content::RenderFrameHost*>* map,
+      content::RenderFrameHost* render_frame_host,
+      const extensions::Extension* extension) const override;
 
   // |context| is the single BrowserContext used for IsValidContext().
   // |pref_service| is used for GetPrefServiceForContext().
@@ -127,6 +134,10 @@ class AtomExtensionsBrowserClient : public extensions::ExtensionsBrowserClient {
  private:
   // Support for extension APIs.
   std::unique_ptr<extensions::ExtensionsAPIClient> api_client_;
+
+  // Support for ProcessManager.
+  std::unique_ptr<extensions::ElectronProcessManagerDelegate>
+      process_manager_delegate_;
 
   // The extension cache used for download and installation.
   std::unique_ptr<extensions::ExtensionCache> extension_cache_;

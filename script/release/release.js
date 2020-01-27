@@ -114,6 +114,7 @@ function assetsForVersion (version, validatingRelease) {
     `electron-${version}-linux-armv7l.zip`,
     `electron-${version}-linux-ia32-symbols.zip`,
     `electron-${version}-linux-ia32.zip`,
+    `electron-${version}-linux-x64-debug.zip`,
     `electron-${version}-linux-x64-symbols.zip`,
     `electron-${version}-linux-x64.zip`,
     `electron-${version}-mas-x64-dsym.zip`,
@@ -130,6 +131,7 @@ function assetsForVersion (version, validatingRelease) {
     `electron-${version}-win32-arm64.zip`,
     `electron-api.json`,
     `electron.d.ts`,
+    `hunspell_dictionaries.zip`,
     `ffmpeg-${version}-darwin-x64.zip`,
     `ffmpeg-${version}-linux-arm64.zip`,
     `ffmpeg-${version}-linux-armv7l.zip`,
@@ -147,7 +149,10 @@ function assetsForVersion (version, validatingRelease) {
     `mksnapshot-${version}-mas-x64.zip`,
     `mksnapshot-${version}-win32-ia32.zip`,
     `mksnapshot-${version}-win32-x64.zip`,
-    `mksnapshot-${version}-win32-arm64-x64.zip`
+    `mksnapshot-${version}-win32-arm64-x64.zip`,
+    `electron-${version}-win32-ia32-toolchain-profile.zip`,
+    `electron-${version}-win32-x64-toolchain-profile.zip`,
+    `electron-${version}-win32-arm64-toolchain-profile.zip`
   ]
   if (!validatingRelease) {
     patterns.push('SHASUMS256.txt')

@@ -1,13 +1,9 @@
-import * as chai from 'chai'
-import dirtyChai = require('dirty-chai')
+import { expect } from 'chai'
 import * as ChildProcess from 'child_process'
 import * as path from 'path'
 import { emittedOnce } from './events-helpers'
 import { BrowserView, BrowserWindow } from 'electron'
-import { closeWindow } from './window-helpers';
-
-const { expect } = chai
-chai.use(dirtyChai)
+import { closeWindow } from './window-helpers'
 
 describe('BrowserView module', () => {
   const fixtures = path.resolve(__dirname, '..', 'spec', 'fixtures')
@@ -27,11 +23,11 @@ describe('BrowserView module', () => {
   })
 
   afterEach(async () => {
+    await closeWindow(w)
+
     if (view) {
       view.destroy()
     }
-
-    await closeWindow(w)
   })
 
   describe('BrowserView.destroy()', () => {
@@ -228,10 +224,10 @@ describe('BrowserView module', () => {
 
   describe('new BrowserView()', () => {
     it('does not crash on exit', async () => {
-      const appPath = path.join(fixtures, 'api', 'leak-exit-browserview.js')
+      const appPath = path.join(__dirname, 'fixtures', 'api', 'leak-exit-browserview.js')
       const electronPath = process.execPath
       const appProcess = ChildProcess.spawn(electronPath, [appPath])
-      const [code] = await emittedOnce(appProcess, 'close')
+      const [code] = await emittedOnce(appProcess, 'exit')
       expect(code).to.equal(0)
     })
   })

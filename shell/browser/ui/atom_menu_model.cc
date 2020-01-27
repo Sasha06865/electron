@@ -17,7 +17,7 @@ bool AtomMenuModel::Delegate::GetAcceleratorForCommandId(
 AtomMenuModel::AtomMenuModel(Delegate* delegate)
     : ui::SimpleMenuModel(delegate), delegate_(delegate) {}
 
-AtomMenuModel::~AtomMenuModel() {}
+AtomMenuModel::~AtomMenuModel() = default;
 
 void AtomMenuModel::SetToolTip(int index, const base::string16& toolTip) {
   int command_id = GetCommandIdAt(index);
@@ -39,6 +39,17 @@ base::string16 AtomMenuModel::GetRoleAt(int index) {
   const int command_id = GetCommandIdAt(index);
   const auto iter = roles_.find(command_id);
   return iter == std::end(roles_) ? base::string16() : iter->second;
+}
+
+void AtomMenuModel::SetSublabel(int index, const base::string16& sublabel) {
+  int command_id = GetCommandIdAt(index);
+  sublabels_[command_id] = sublabel;
+}
+
+base::string16 AtomMenuModel::GetSublabelAt(int index) const {
+  int command_id = GetCommandIdAt(index);
+  const auto iter = sublabels_.find(command_id);
+  return iter == std::end(sublabels_) ? base::string16() : iter->second;
 }
 
 bool AtomMenuModel::GetAcceleratorAtWithParams(

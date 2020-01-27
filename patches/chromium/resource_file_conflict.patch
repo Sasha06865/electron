@@ -52,10 +52,10 @@ Some alternatives to this patch:
 None of these options seems like a substantial maintainability win over this patch to me (@nornagon).
 
 diff --git a/chrome/BUILD.gn b/chrome/BUILD.gn
-index a9814f1349d886c0ec1968fa9bf4e2695c475307..e54ad878e0815c0210f8627816ae1be3151bfb34 100644
+index bbc1aa4a9816281fb09647859c3b96e1f9cd0138..9fb4d55d1c527b6e1ba1fc5727b890872ffe3c16 100644
 --- a/chrome/BUILD.gn
 +++ b/chrome/BUILD.gn
-@@ -1624,7 +1624,7 @@ if (is_chrome_branded && !is_android) {
+@@ -1488,7 +1488,7 @@ if (is_chrome_branded && !is_android) {
    }
  }
  
@@ -64,7 +64,7 @@ index a9814f1349d886c0ec1968fa9bf4e2695c475307..e54ad878e0815c0210f8627816ae1be3
    chrome_paks("packed_resources") {
      if (is_mac) {
        output_dir = "$root_gen_dir/repack"
-@@ -1648,6 +1648,12 @@ if (!is_android) {
+@@ -1508,6 +1508,12 @@ if (!is_android) {
    }
  }
  
@@ -75,5 +75,5 @@ index a9814f1349d886c0ec1968fa9bf4e2695c475307..e54ad878e0815c0210f8627816ae1be3
 +}
 +
  repack("browser_tests_pak") {
-   sources = [
-     "$root_gen_dir/chrome/webui_test_resources.pak",
+   sources = [ "$root_gen_dir/chrome/webui_test_resources.pak" ]
+   output = "$root_out_dir/browser_tests.pak"

@@ -454,10 +454,8 @@ The usage is the same with [the `select-client-certificate` event of
 Returns:
 
 * `event` Event
-* `request` Object
-  * `method` String
+* `authenticationResponseDetails` Object
   * `url` URL
-  * `referrer` URL
 * `authInfo` Object
   * `isProxy` Boolean
   * `scheme` String
@@ -465,8 +463,8 @@ Returns:
   * `port` Integer
   * `realm` String
 * `callback` Function
-  * `username` String
-  * `password` String
+  * `username` String (optional)
+  * `password` String (optional)
 
 Emitted when `webContents` wants to do basic auth.
 
@@ -570,6 +568,9 @@ Returns:
   * `titleText` String - Title or alt text of the selection that the context
     was invoked on.
   * `misspelledWord` String - The misspelled word under the cursor, if any.
+  * `dictionarySuggestions` String[] - An array of suggested words to show the
+    user to replace the `misspelledWord`.  Only available if there is a misspelled
+    word and spellchecker is enabled.
   * `frameCharset` String - The character encoding of the frame on which the
     menu was invoked.
   * `inputFieldType` String - If the context menu was invoked on an input
@@ -705,8 +706,7 @@ Returns:
 * `line` Integer
 * `sourceId` String
 
-Emitted when the associated window logs a console message. Will not be emitted
-for windows with *offscreen rendering* enabled.
+Emitted when the associated window logs a console message.
 
 #### Event: 'preload-error'
 
@@ -797,17 +797,6 @@ Returns:
 * `event` IpcMainEvent
 
 Emitted when `remote.getCurrentWebContents()` is called in the renderer process.
-Calling `event.preventDefault()` will prevent the object from being returned.
-Custom value can be returned by setting `event.returnValue`.
-
-#### Event: 'remote-get-guest-web-contents'
-
-Returns:
-
-* `event` IpcMainEvent
-* `guestWebContents` [WebContents](web-contents.md)
-
-Emitted when `<webview>.getWebContents()` is called in the renderer process.
 Calling `event.preventDefault()` will prevent the object from being returned.
 Custom value can be returned by setting `event.returnValue`.
 
@@ -998,7 +987,7 @@ Injects CSS into the current web page and returns a unique key for the inserted
 stylesheet.
 
 ```js
-contents.on('did-finish-load', function () {
+contents.on('did-finish-load', () => {
   contents.insertCSS('html, body { background-color: #f00; }')
 })
 ```
@@ -1013,7 +1002,7 @@ Removes the inserted CSS from the current web page. The stylesheet is identified
 by its key, which is returned from `contents.insertCSS(css)`.
 
 ```js
-contents.on('did-finish-load', async function () {
+contents.on('did-finish-load', async () => {
   const key = await contents.insertCSS('html, body { background-color: #f00; }')
   contents.removeInsertedCSS(key)
 })
@@ -1041,6 +1030,17 @@ contents.executeJavaScript('fetch("https://jsonplaceholder.typicode.com/users/1"
     console.log(result) // Will be the JSON object from the fetch call
   })
 ```
+
+#### `contents.executeJavaScriptInIsolatedWorld(worldId, scripts[, userGesture])`
+
+* `worldId` Integer - The ID of the world to run the javascript in, `0` is the default world, `999` is the world used by Electron's `contextIsolation` feature.  You can provide any integer here.
+* `scripts` [WebSource[]](structures/web-source.md)
+* `userGesture` Boolean (optional) - Default is `false`.
+
+Returns `Promise<any>` - A promise that resolves with the result of the executed code
+or is rejected if the result of the code is a rejected promise.
+
+Works like `executeJavaScript` but evaluates `scripts` in an isolated context.
 
 #### `contents.setIgnoreMenuShortcuts(ignore)` _Experimental_
 
@@ -1112,15 +1112,6 @@ Sets the maximum and minimum pinch-to-zoom level.
 > ```js
 > contents.setVisualZoomLevelLimits(1, 3)
 > ```
-
-#### `contents.setLayoutZoomLevelLimits(minimumLevel, maximumLevel)`
-
-* `minimumLevel` Number
-* `maximumLevel` Number
-
-Returns `Promise<void>`
-
-Sets the maximum and minimum layout-based (i.e. non-visual) zoom level.
 
 #### `contents.undo()`
 
@@ -1234,11 +1225,34 @@ Returns `Promise<NativeImage>` - Resolves with a [NativeImage](native-image.md)
 
 Captures a snapshot of the page within `rect`. Omitting `rect` will capture the whole visible page.
 
+#### `contents.isBeingCaptured()`
+
+Returns `Boolean` - Whether this page is being captured. It returns true when the capturer count
+is large then 0.
+
+#### `contents.incrementCapturerCount([size, stayHidden])`
+
+* `size` [Size](structures/size.md) (optional) - The perferred size for the capturer.
+* `stayHidden` Boolean (optional) -  Keep the page hidden instead of visible.
+
+Increase the capturer count by one. The page is considered visible when its browser window is
+hidden and the capturer count is non-zero. If you would like the page to stay hidden, you should ensure that `stayHidden` is set to true.
+
+This also affects the Page Visibility API.
+
+#### `contents.decrementCapturerCount([stayHidden])`
+
+* `stayHidden` Boolean (optional) -  Keep the page in hidden state instead of visible.
+
+Decrease the capturer count by one. The page will be set to hidden or occluded state when its
+browser window is hidden or occluded and the capturer count reaches zero. If you want to
+decrease the hidden capturer count instead you should set `stayHidden` to true.
+
 #### `contents.getPrinters()`
 
 Get the system printer list.
 
-Returns [`PrinterInfo[]`](structures/printer-info.md).
+Returns [`PrinterInfo[]`](structures/printer-info.md)
 
 #### `contents.print([options], [callback])`
 
@@ -1327,12 +1341,13 @@ win.loadURL('http://github.com')
 
 win.webContents.on('did-finish-load', () => {
   // Use default printing options
-  win.webContents.printToPDF({}, (error, data) => {
-    if (error) throw error
+  win.webContents.printToPDF({}).then(data => {
     fs.writeFile('/tmp/print.pdf', data, (error) => {
       if (error) throw error
       console.log('Write PDF successfully.')
     })
+  }).catch(error => {
+    console.log(error)
   })
 })
 ```
@@ -1389,13 +1404,20 @@ An example of showing devtools in a `<webview>` tag:
 </head>
 <body>
   <webview id="browser" src="https://github.com"></webview>
-  <webview id="devtools"></webview>
+  <webview id="devtools" src="about:blank"></webview>
   <script>
+    const { webContents } = require('electron').remote
+    const emittedOnce = (element, eventName) => new Promise(resolve => {
+      element.addEventListener(eventName, event => resolve(event), { once: true })
+    })
     const browserView = document.getElementById('browser')
     const devtoolsView = document.getElementById('devtools')
-    browserView.addEventListener('dom-ready', () => {
-      const browser = browserView.getWebContents()
-      browser.setDevToolsWebContents(devtoolsView.getWebContents())
+    const browserReady = emittedOnce(browserView, 'dom-ready')
+    const devtoolsReady = emittedOnce(devtoolsView, 'dom-ready')
+    Promise.all([browserReady, devtoolsReady]).then(() => {
+      const browser = webContents.fromId(browserView.getWebContentsId())
+      const devtools = webContents.fromId(devtoolsView.getWebContentsId())
+      browser.setDevToolsWebContents(devtools)
       browser.openDevTools()
     })
   </script>
@@ -1461,6 +1483,16 @@ Starts inspecting element at position (`x`, `y`).
 
 Opens the developer tools for the shared worker context.
 
+#### `contents.inspectSharedWorkerById(workerId)`
+
+* `workerId` String
+
+Inspects the shared worker based on its ID.
+
+#### `contents.getAllSharedWorkers()`
+
+Returns [`SharedWorkerInfo[]`](structures/shared-worker-info.md) - Information about all Shared Workers.
+
 #### `contents.inspectServiceWorker()`
 
 Opens the developer tools for the service worker context.
@@ -1470,9 +1502,15 @@ Opens the developer tools for the service worker context.
 * `channel` String
 * `...args` any[]
 
-Send an asynchronous message to renderer process via `channel`, you can also
-send arbitrary arguments. Arguments will be serialized in JSON internally and
-hence no functions or prototype chain will be included.
+Send an asynchronous message to the renderer process via `channel`, along with
+arguments. Arguments will be serialized with the [Structured Clone
+Algorithm][SCA], just like [`postMessage`][], so prototype chains will not be
+included. Sending Functions, Promises, Symbols, WeakMaps, or WeakSets will
+throw an exception.
+
+> **NOTE**: Sending non-standard JavaScript types such as DOM objects or
+> special Electron objects is deprecated, and will begin throwing an exception
+> starting with Electron 9.
 
 The renderer process can handle the message by listening to `channel` with the
 [`ipcRenderer`](ipc-renderer.md) module.
@@ -1513,8 +1551,14 @@ app.on('ready', () => {
 * `...args` any[]
 
 Send an asynchronous message to a specific frame in a renderer process via
-`channel`. Arguments will be serialized
-as JSON internally and as such no functions or prototype chains will be included.
+`channel`, along with arguments. Arguments will be serialized with the
+[Structured Clone Algorithm][SCA], just like [`postMessage`][], so prototype
+chains will not be included. Sending Functions, Promises, Symbols, WeakMaps, or
+WeakSets will throw an exception.
+
+> **NOTE**: Sending non-standard JavaScript types such as DOM objects or
+> special Electron objects is deprecated, and will begin throwing an exception
+> starting with Electron 9.
 
 The renderer process can handle the message by listening to `channel` with the
 [`ipcRenderer`](ipc-renderer.md) module.
@@ -1753,7 +1797,7 @@ Only applicable if *offscreen rendering* is enabled.
 
 #### `contents.id` _Readonly_
 
-A `Integer` representing the unique ID of this WebContents.
+A `Integer` representing the unique ID of this WebContents. Each ID is unique among all `WebContents` instances of the entire Electron application.
 
 #### `contents.session` _Readonly_
 
@@ -1776,3 +1820,5 @@ A [`Debugger`](debugger.md) instance for this webContents.
 
 [keyboardevent]: https://developer.mozilla.org/en-US/docs/Web/API/KeyboardEvent
 [event-emitter]: https://nodejs.org/api/events.html#events_class_eventemitter
+[SCA]: https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Structured_clone_algorithm
+[`postMessage`]: https://developer.mozilla.org/en-US/docs/Web/API/Window/postMessage

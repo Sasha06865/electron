@@ -81,7 +81,6 @@ app.on('ready', () => {
   })
 
   mainWindow.webContents.setVisualZoomLevelLimits(50, 200)
-  mainWindow.webContents.setLayoutZoomLevelLimits(50, 200)
 
   mainWindow.webContents.print({ silent: true, printBackground: false })
   mainWindow.webContents.print()
@@ -318,17 +317,6 @@ app.setAboutPanelOptions({
   version: '1.2.3'
 })
 
-let window = new BrowserWindow()
-window.setProgressBar(0.5)
-window.setRepresentedFilename('/etc/passwd')
-window.setDocumentEdited(true)
-window.previewFile('/path/to/file')
-window.previewFile('/path/to/file', 'Displayed Name')
-window.setVibrancy('menu')
-window.setVibrancy('titlebar')
-window.setVibrancy('selection')
-window.setVibrancy('popover')
-
 // Online/Offline Event Detection
 // https://github.com/atom/electron/blob/master/docs/tutorial/online-offline-events.md
 
@@ -356,8 +344,8 @@ app.on('ready', () => {
   window.loadURL('https://github.com')
 })
 
-// Supported Chrome command line switches
-// https://github.com/atom/electron/blob/master/docs/api/chrome-command-line-switches.md
+// Supported command line switches
+// https://github.com/atom/electron/blob/master/docs/api/command-line-switches.md
 
 app.commandLine.appendSwitch('remote-debugging-port', '8315')
 app.commandLine.appendSwitch('host-rules', 'MAP * 127.0.0.1')
@@ -448,7 +436,7 @@ autoUpdater.on('update-downloaded', (event, releaseNotes, releaseName, releaseDa
   console.log('update-downloaded', releaseNotes, releaseName, releaseDate, updateURL)
 })
 
-// browser-window
+// BrowserWindow
 // https://github.com/atom/electron/blob/master/docs/api/browser-window.md
 
 let win3 = new BrowserWindow({ width: 800, height: 600, show: false })
@@ -461,6 +449,18 @@ win3.show()
 
 const toolbarRect = document.getElementById('toolbar').getBoundingClientRect()
 win3.setSheetOffset(toolbarRect.height)
+
+let window = new BrowserWindow()
+window.setProgressBar(0.5)
+window.setRepresentedFilename('/etc/passwd')
+window.setDocumentEdited(true)
+window.previewFile('/path/to/file')
+window.previewFile('/path/to/file', 'Displayed Name')
+window.setVibrancy('menu')
+window.setVibrancy('titlebar')
+window.setVibrancy('selection')
+window.setVibrancy('popover')
+window.setIcon('/path/to/icon')
 
 const installed = BrowserWindow.getDevToolsExtensions().hasOwnProperty('devtron')
 
@@ -1055,8 +1055,11 @@ app.on('ready', () => {
 // https://github.com/atom/electron/blob/master/docs/api/shell.md
 
 shell.showItemInFolder('/home/user/Desktop/test.txt')
-shell.openItem('/home/user/Desktop/test.txt')
 shell.moveItemToTrash('/home/user/Desktop/test.txt')
+
+shell.openPath('/home/user/Desktop/test.txt').then(err => {
+  if (err) console.log(err)
+})
 
 shell.openExternal('https://github.com', {
   activate: false

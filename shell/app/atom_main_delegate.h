@@ -11,12 +11,18 @@
 #include "content/public/app/content_main_delegate.h"
 #include "content/public/common/content_client.h"
 
+namespace tracing {
+class TracingSamplerProfiler;
+}
+
 namespace electron {
 
 void LoadResourceBundle(const std::string& locale);
 
 class AtomMainDelegate : public content::ContentMainDelegate {
  public:
+  static const char* const kNonWildcardDomainNonPortSchemes[];
+  static const size_t kNonWildcardDomainNonPortSchemesSize;
   AtomMainDelegate();
   ~AtomMainDelegate() override;
 
@@ -36,7 +42,6 @@ class AtomMainDelegate : public content::ContentMainDelegate {
 #if defined(OS_MACOSX)
   bool DelaySandboxInitialization(const std::string& process_type) override;
 #endif
-  bool ShouldLockSchemeRegistry() override;
   bool ShouldCreateFeatureList() override;
 
  private:
@@ -51,6 +56,7 @@ class AtomMainDelegate : public content::ContentMainDelegate {
   std::unique_ptr<content::ContentGpuClient> gpu_client_;
   std::unique_ptr<content::ContentRendererClient> renderer_client_;
   std::unique_ptr<content::ContentUtilityClient> utility_client_;
+  std::unique_ptr<tracing::TracingSamplerProfiler> tracing_sampler_profiler_;
 
   DISALLOW_COPY_AND_ASSIGN(AtomMainDelegate);
 };

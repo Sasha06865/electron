@@ -87,9 +87,10 @@ void AtomDownloadManagerDelegate::GetItemSaveDialogOptions(
 
 void AtomDownloadManagerDelegate::OnDownloadPathGenerated(
     uint32_t download_id,
-    const content::DownloadTargetCallback& callback,
+    content::DownloadTargetCallback callback,
     const base::FilePath& default_path) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+  base::ThreadRestrictions::ScopedAllowIO allow_io;
 
   auto* item = download_manager_->GetDownload(download_id);
   if (!item)
@@ -123,23 +124,25 @@ void AtomDownloadManagerDelegate::OnDownloadPathGenerated(
     settings.force_detached = offscreen;
 
     v8::Isolate* isolate = v8::Isolate::GetCurrent();
-    electron::util::Promise<gin_helper::Dictionary> dialog_promise(isolate);
-    auto dialog_callback =
-        base::BindOnce(&AtomDownloadManagerDelegate::OnDownloadSaveDialogDone,
-                       base::Unretained(this), download_id, callback);
+    gin_helper::Promise<gin_helper::Dictionary> dialog_promise(isolate);
+    auto dialog_callback = base::BindOnce(
+        &AtomDownloadManagerDelegate::OnDownloadSaveDialogDone,
+        base::Unretained(this), download_id, std::move(callback));
 
     ignore_result(dialog_promise.Then(std::move(dialog_callback)));
     file_dialog::ShowSaveDialog(settings, std::move(dialog_promise));
   } else {
-    callback.Run(path, download::DownloadItem::TARGET_DISPOSITION_PROMPT,
-                 download::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS, path,
-                 download::DOWNLOAD_INTERRUPT_REASON_NONE);
+    std::move(callback).Run(path,
+                            download::DownloadItem::TARGET_DISPOSITION_PROMPT,
+                            download::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
+                            item->GetMixedContentStatus(), path,
+                            download::DOWNLOAD_INTERRUPT_REASON_NONE);
   }
 }
 
 void AtomDownloadManagerDelegate::OnDownloadSaveDialogDone(
     uint32_t download_id,
-    const content::DownloadTargetCallback& download_callback,
+    content::DownloadTargetCallback download_callback,
     gin_helper::Dictionary result) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
@@ -176,9 +179,10 @@ void AtomDownloadManagerDelegate::OnDownloadSaveDialogDone(
   const auto interrupt_reason =
       path.empty() ? download::DOWNLOAD_INTERRUPT_REASON_USER_CANCELED
                    : download::DOWNLOAD_INTERRUPT_REASON_NONE;
-  download_callback.Run(path, download::DownloadItem::TARGET_DISPOSITION_PROMPT,
-                        download::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS, path,
-                        interrupt_reason);
+  std::move(download_callback)
+      .Run(path, download::DownloadItem::TARGET_DISPOSITION_PROMPT,
+           download::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
+           item->GetMixedContentStatus(), path, interrupt_reason);
 }
 
 void AtomDownloadManagerDelegate::Shutdown() {
@@ -188,15 +192,17 @@ void AtomDownloadManagerDelegate::Shutdown() {
 
 bool AtomDownloadManagerDelegate::DetermineDownloadTarget(
     download::DownloadItem* download,
-    const content::DownloadTargetCallback& callback) {
+    content::DownloadTargetCallback* callback) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
   if (!download->GetForcedFilePath().empty()) {
-    callback.Run(download->GetForcedFilePath(),
-                 download::DownloadItem::TARGET_DISPOSITION_OVERWRITE,
-                 download::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
-                 download->GetForcedFilePath(),
-                 download::DOWNLOAD_INTERRUPT_REASON_NONE);
+    std::move(*callback).Run(
+        download->GetForcedFilePath(),
+        download::DownloadItem::TARGET_DISPOSITION_OVERWRITE,
+        download::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
+        download::DownloadItem::MixedContentStatus::UNKNOWN,
+        download->GetForcedFilePath(),
+        download::DOWNLOAD_INTERRUPT_REASON_NONE);
     return true;
   }
 
@@ -204,10 +210,11 @@ bool AtomDownloadManagerDelegate::DetermineDownloadTarget(
   base::FilePath save_path;
   GetItemSavePath(download, &save_path);
   if (!save_path.empty()) {
-    callback.Run(save_path,
-                 download::DownloadItem::TARGET_DISPOSITION_OVERWRITE,
-                 download::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS, save_path,
-                 download::DOWNLOAD_INTERRUPT_REASON_NONE);
+    std::move(*callback).Run(
+        save_path, download::DownloadItem::TARGET_DISPOSITION_OVERWRITE,
+        download::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
+        download::DownloadItem::MixedContentStatus::UNKNOWN, save_path,
+        download::DOWNLOAD_INTERRUPT_REASON_NONE);
     return true;
   }
 
@@ -216,9 +223,9 @@ bool AtomDownloadManagerDelegate::DetermineDownloadTarget(
   base::FilePath default_download_path =
       browser_context->prefs()->GetFilePath(prefs::kDownloadDefaultDirectory);
 
-  base::PostTaskWithTraitsAndReplyWithResult(
+  base::PostTaskAndReplyWithResult(
       FROM_HERE,
-      {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
+      {base::ThreadPool(), base::MayBlock(), base::TaskPriority::BEST_EFFORT,
        base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN},
       base::BindOnce(&CreateDownloadPath, download->GetURL(),
                      download->GetContentDisposition(),
@@ -226,20 +233,20 @@ bool AtomDownloadManagerDelegate::DetermineDownloadTarget(
                      default_download_path),
       base::BindOnce(&AtomDownloadManagerDelegate::OnDownloadPathGenerated,
                      weak_ptr_factory_.GetWeakPtr(), download->GetId(),
-                     callback));
+                     std::move(*callback)));
   return true;
 }
 
 bool AtomDownloadManagerDelegate::ShouldOpenDownload(
     download::DownloadItem* download,
-    const content::DownloadOpenDelayedCallback& callback) {
+    content::DownloadOpenDelayedCallback callback) {
   return true;
 }
 
 void AtomDownloadManagerDelegate::GetNextId(
-    const content::DownloadIdCallback& callback) {
+    content::DownloadIdCallback callback) {
   static uint32_t next_id = download::DownloadItem::kInvalidId + 1;
-  callback.Run(next_id++);
+  std::move(callback).Run(next_id++);
 }
 
 }  // namespace electron

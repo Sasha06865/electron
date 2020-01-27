@@ -6,12 +6,13 @@
 
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "base/command_line.h"
 #include "base/strings/string_split.h"
 #include "base/strings/stringprintf.h"
-#include "components/network_hints/renderer/prescient_networking_dispatcher.h"
+#include "components/network_hints/renderer/web_prescient_networking_impl.h"
 #include "content/common/buildflags.h"
 #include "content/public/common/content_constants.h"
 #include "content/public/common/content_switches.h"
@@ -22,7 +23,6 @@
 #include "printing/buildflags/buildflags.h"
 #include "shell/common/color_util.h"
 #include "shell/common/gin_helper/dictionary.h"
-#include "shell/common/native_mate_converters/value_converter.h"
 #include "shell/common/options_switches.h"
 #include "shell/renderer/atom_autofill_agent.h"
 #include "shell/renderer/atom_render_frame_observer.h"
@@ -46,17 +46,18 @@
 #include <shlobj.h>
 #endif
 
+#if BUILDFLAG(ENABLE_BUILTIN_SPELLCHECKER)
+#include "components/spellcheck/renderer/spellcheck.h"
+#include "components/spellcheck/renderer/spellcheck_provider.h"
+#endif
+
 #if BUILDFLAG(ENABLE_PDF_VIEWER)
 #include "shell/common/atom_constants.h"
 #endif  // BUILDFLAG(ENABLE_PDF_VIEWER)
 
-#if BUILDFLAG(ENABLE_PEPPER_FLASH)
-#include "chrome/renderer/pepper/pepper_helper.h"
-#endif  // BUILDFLAG(ENABLE_PEPPER_FLASH)
-
-#if BUILDFLAG(ENABLE_TTS)
-#include "chrome/renderer/tts_dispatcher.h"
-#endif  // BUILDFLAG(ENABLE_TTS)
+#if BUILDFLAG(ENABLE_PLUGINS)
+#include "shell/renderer/pepper_helper.h"
+#endif  // BUILDFLAG(ENABLE_PLUGINS)
 
 #if BUILDFLAG(ENABLE_PRINTING)
 #include "components/printing/renderer/print_render_frame_helper.h"
@@ -106,7 +107,7 @@ RendererClientBase::RendererClientBase() {
       command_line->GetSwitchValueASCII(::switches::kRendererClientId);
 }
 
-RendererClientBase::~RendererClientBase() {}
+RendererClientBase::~RendererClientBase() = default;
 
 void RendererClientBase::DidCreateScriptContext(
     v8::Handle<v8::Context> context,
@@ -117,10 +118,12 @@ void RendererClientBase::DidCreateScriptContext(
   gin_helper::Dictionary global(context->GetIsolate(), context->Global());
   global.SetHidden("contextId", context_id);
 
+#if BUILDFLAG(ENABLE_REMOTE_MODULE)
   auto* command_line = base::CommandLine::ForCurrentProcess();
   bool enableRemoteModule =
       command_line->HasSwitch(switches::kEnableRemoteModule);
   global.SetHidden("enableRemoteModule", enableRemoteModule);
+#endif
 }
 
 void RendererClientBase::AddRenderBindings(
@@ -149,6 +152,11 @@ void RendererClientBase::RenderThreadStarted() {
   extensions::ExtensionsRendererClient::Set(extensions_renderer_client_.get());
 
   thread->AddObserver(extensions_renderer_client_->GetDispatcher());
+#endif
+
+#if BUILDFLAG(ENABLE_BUILTIN_SPELLCHECKER)
+  if (command_line->HasSwitch(switches::kEnableSpellcheck))
+    spellcheck_ = std::make_unique<SpellCheck>(this);
 #endif
 
   blink::WebCustomElement::AddEmbedderCustomElementName("webview");
@@ -200,9 +208,6 @@ void RendererClientBase::RenderThreadStarted() {
   blink::WebSecurityPolicy::RegisterURLSchemeAsAllowingServiceWorkers("file");
   blink::SchemeRegistry::RegisterURLSchemeAsSupportingFetchAPI("file");
 
-  prescient_networking_dispatcher_.reset(
-      new network_hints::PrescientNetworkingDispatcher());
-
 #if defined(OS_WIN)
   // Set ApplicationUserModelID in renderer process.
   base::string16 app_id =
@@ -219,7 +224,7 @@ void RendererClientBase::RenderFrameCreated(
   new AutofillAgent(render_frame,
                     render_frame->GetAssociatedInterfaceRegistry());
 #endif
-#if BUILDFLAG(ENABLE_PEPPER_FLASH)
+#if BUILDFLAG(ENABLE_PLUGINS)
   new PepperHelper(render_frame);
 #endif
   new ContentSettingsObserver(render_frame);
@@ -235,12 +240,6 @@ void RendererClientBase::RenderFrameCreated(
   render_frame->GetAssociatedInterfaceRegistry()->AddInterface(
       base::BindRepeating(&ElectronApiServiceImpl::BindTo,
                           service->GetWeakPtr()));
-
-#if BUILDFLAG(ENABLE_PDF_VIEWER)
-  // Allow access to file scheme from pdf viewer.
-  blink::WebSecurityPolicy::AddOriginAccessWhitelistEntry(
-      GURL(kPdfViewerUIOrigin), "file", "", true);
-#endif  // BUILDFLAG(ENABLE_PDF_VIEWER)
 
   content::RenderView* render_view = render_frame->GetRenderView();
   if (render_frame->IsMainFrame() && render_view) {
@@ -265,22 +264,41 @@ void RendererClientBase::RenderFrameCreated(
 
   dispatcher->OnRenderFrameCreated(render_frame);
 #endif
+
+#if BUILDFLAG(ENABLE_BUILTIN_SPELLCHECKER)
+  auto* command_line = base::CommandLine::ForCurrentProcess();
+  if (command_line->HasSwitch(switches::kEnableSpellcheck))
+    new SpellCheckProvider(render_frame, spellcheck_.get(), this);
+#endif
 }
+
+#if BUILDFLAG(ENABLE_BUILTIN_SPELLCHECKER)
+void RendererClientBase::BindReceiverOnMainThread(
+    mojo::GenericPendingReceiver receiver) {
+  // TODO(crbug.com/977637): Get rid of the use of BinderRegistry here. This is
+  // only used to bind a spellcheck interface.
+  std::string interface_name = *receiver.interface_name();
+  auto pipe = receiver.PassPipe();
+  registry_.TryBindInterface(interface_name, &pipe);
+}
+
+void RendererClientBase::GetInterface(
+    const std::string& interface_name,
+    mojo::ScopedMessagePipeHandle interface_pipe) {
+  // TODO(crbug.com/977637): Get rid of the use of this implementation of
+  // |service_manager::LocalInterfaceProvider|. This was done only to avoid
+  // churning spellcheck code while eliminating the "chrome" and
+  // "chrome_renderer" services. Spellcheck is (and should remain) the only
+  // consumer of this implementation.
+  content::RenderThread::Get()->BindHostReceiver(
+      mojo::GenericPendingReceiver(interface_name, std::move(interface_pipe)));
+}
+#endif
 
 void RendererClientBase::DidClearWindowObject(
     content::RenderFrame* render_frame) {
   // Make sure every page will get a script context created.
   render_frame->GetWebFrame()->ExecuteScript(blink::WebScriptSource("void 0"));
-}
-
-std::unique_ptr<blink::WebSpeechSynthesizer>
-RendererClientBase::OverrideSpeechSynthesizer(
-    blink::WebSpeechSynthesizerClient* client) {
-#if BUILDFLAG(ENABLE_TTS)
-  return std::make_unique<TtsDispatcher>(client);
-#else
-  return nullptr;
-#endif
 }
 
 bool RendererClientBase::OverrideCreatePlugin(
@@ -320,8 +338,11 @@ void RendererClientBase::DidSetUserAgent(const std::string& user_agent) {
 #endif
 }
 
-blink::WebPrescientNetworking* RendererClientBase::GetPrescientNetworking() {
-  return prescient_networking_dispatcher_.get();
+std::unique_ptr<blink::WebPrescientNetworking>
+RendererClientBase::CreatePrescientNetworking(
+    content::RenderFrame* render_frame) {
+  return std::make_unique<network_hints::WebPrescientNetworkingImpl>(
+      render_frame);
 }
 
 void RendererClientBase::RunScriptsAtDocumentStart(

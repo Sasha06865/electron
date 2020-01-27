@@ -6,19 +6,18 @@
 
 #include <vector>
 
-#include "native_mate/arguments.h"
-#include "native_mate/object_template_builder.h"
-#include "native_mate/wrappable.h"
 #include "shell/common/asar/archive.h"
+#include "shell/common/asar/asar_util.h"
 #include "shell/common/gin_converters/callback_converter.h"
+#include "shell/common/gin_converters/file_path_converter.h"
 #include "shell/common/gin_helper/dictionary.h"
-#include "shell/common/native_mate_converters/file_path_converter.h"
+#include "shell/common/gin_helper/object_template_builder.h"
+#include "shell/common/gin_helper/wrappable.h"
 #include "shell/common/node_includes.h"
-#include "third_party/electron_node/src/node_native_module_env.h"
-
+#include "shell/common/node_util.h"
 namespace {
 
-class Archive : public mate::Wrappable<Archive> {
+class Archive : public gin_helper::Wrappable<Archive> {
  public:
   static v8::Local<v8::Value> Create(v8::Isolate* isolate,
                                      const base::FilePath& path) {
@@ -30,8 +29,8 @@ class Archive : public mate::Wrappable<Archive> {
 
   static void BuildPrototype(v8::Isolate* isolate,
                              v8::Local<v8::FunctionTemplate> prototype) {
-    prototype->SetClassName(mate::StringToV8(isolate, "Archive"));
-    mate::ObjectTemplateBuilder(isolate, prototype->PrototypeTemplate())
+    prototype->SetClassName(gin::StringToV8(isolate, "Archive"));
+    gin_helper::ObjectTemplateBuilder(isolate, prototype->PrototypeTemplate())
         .SetProperty("path", &Archive::GetPath)
         .SetMethod("getFileInfo", &Archive::GetFileInfo)
         .SetMethod("stat", &Archive::Stat)
@@ -83,7 +82,7 @@ class Archive : public mate::Wrappable<Archive> {
     std::vector<base::FilePath> files;
     if (!archive_ || !archive_->Readdir(path, &files))
       return v8::False(isolate);
-    return mate::ConvertToV8(isolate, files);
+    return gin::ConvertToV8(isolate, files);
   }
 
   // Returns the path of file with symbol link resolved.
@@ -92,7 +91,7 @@ class Archive : public mate::Wrappable<Archive> {
     base::FilePath realpath;
     if (!archive_ || !archive_->Realpath(path, &realpath))
       return v8::False(isolate);
-    return mate::ConvertToV8(isolate, realpath);
+    return gin::ConvertToV8(isolate, realpath);
   }
 
   // Copy the file out into a temporary file and returns the new path.
@@ -101,7 +100,7 @@ class Archive : public mate::Wrappable<Archive> {
     base::FilePath new_path;
     if (!archive_ || !archive_->CopyFileOut(path, &new_path))
       return v8::False(isolate);
-    return mate::ConvertToV8(isolate, new_path);
+    return gin::ConvertToV8(isolate, new_path);
   }
 
   // Return the file descriptor.
@@ -122,9 +121,23 @@ void InitAsarSupport(v8::Isolate* isolate, v8::Local<v8::Value> require) {
   std::vector<v8::Local<v8::String>> asar_init_params = {
       node::FIXED_ONE_BYTE_STRING(isolate, "require")};
   std::vector<v8::Local<v8::Value>> asar_init_args = {require};
-  node::native_module::NativeModuleEnv::CompileAndCall(
-      isolate->GetCurrentContext(), "electron/js2c/asar_init",
-      &asar_init_params, &asar_init_args, nullptr);
+  electron::util::CompileAndCall(isolate->GetCurrentContext(),
+                                 "electron/js2c/asar_init", &asar_init_params,
+                                 &asar_init_args, nullptr);
+}
+
+v8::Local<v8::Value> SplitPath(v8::Isolate* isolate,
+                               const base::FilePath& path) {
+  gin_helper::Dictionary dict = gin::Dictionary::CreateEmpty(isolate);
+  base::FilePath asar_path, file_path;
+  if (asar::GetAsarArchivePath(path, &asar_path, &file_path, true)) {
+    dict.Set("isAsar", true);
+    dict.Set("asarPath", asar_path);
+    dict.Set("filePath", file_path);
+  } else {
+    dict.Set("isAsar", false);
+  }
+  return dict.GetHandle();
 }
 
 void Initialize(v8::Local<v8::Object> exports,
@@ -133,6 +146,7 @@ void Initialize(v8::Local<v8::Object> exports,
                 void* priv) {
   gin_helper::Dictionary dict(context->GetIsolate(), exports);
   dict.SetMethod("createArchive", &Archive::Create);
+  dict.SetMethod("splitPath", &SplitPath);
   dict.SetMethod("initAsarSupport", &InitAsarSupport);
 }
 

@@ -1,15 +1,25 @@
 import { expect } from 'chai'
 import { Menu, Tray, nativeImage } from 'electron'
 import { ifdescribe, ifit } from './spec-helpers'
+import * as path from 'path'
 
 describe('tray module', () => {
-  let tray: Tray;
+  let tray: Tray
 
   beforeEach(() => { tray = new Tray(nativeImage.createEmpty()) })
 
   afterEach(() => {
     tray.destroy()
     tray = null as any
+  })
+
+  describe('new Tray', () => {
+    it('throws a descriptive error for a missing file', () => {
+      const badPath = path.resolve('I', 'Do', 'Not', 'Exist')
+      expect(() => {
+        tray = new Tray(badPath)
+      }).to.throw(/Image could not be created from .*/)
+    })
   })
 
   ifdescribe(process.platform === 'darwin')('tray get/set ignoreDoubleClickEvents', () => {
@@ -53,12 +63,24 @@ describe('tray module', () => {
     })
   })
 
+  describe('tray.closeContextMenu()', () => {
+    ifit(process.platform === 'win32')('does not crash when called more than once', function (done) {
+      tray.setContextMenu(Menu.buildFromTemplate([{ label: 'Test' }]))
+      setTimeout(() => {
+        tray.closeContextMenu()
+        tray.closeContextMenu()
+        done()
+      })
+      tray.popUpContextMenu()
+    })
+  })
+
   describe('tray.getBounds()', () => {
     afterEach(() => { tray.destroy() })
 
-    ifit(process.platform !== 'linux') ('returns a bounds object', function () {
+    ifit(process.platform !== 'linux')('returns a bounds object', function () {
       const bounds = tray.getBounds()
-      expect(bounds).to.be.an('object').and.to.have.all.keys('x', 'y', 'width', 'height');
+      expect(bounds).to.be.an('object').and.to.have.all.keys('x', 'y', 'width', 'height')
     })
   })
 

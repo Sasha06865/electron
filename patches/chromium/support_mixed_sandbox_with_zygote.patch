@@ -22,21 +22,22 @@ However, the patch would need to be reviewed by the security team, as it
 does touch a security-sensitive class.
 
 diff --git a/content/browser/renderer_host/render_process_host_impl.cc b/content/browser/renderer_host/render_process_host_impl.cc
-index 20d0b4a801bdbe0300f878f369fc9017fc8aea3f..6302948343ee810a9d35a70be0c91a1ffbfb7647 100644
+index 6021b5d6f7e9c6932f0913927895f29169974fea..c481a1b984d43e86bb72a319cc5cc75dd7efc0fa 100644
 --- a/content/browser/renderer_host/render_process_host_impl.cc
 +++ b/content/browser/renderer_host/render_process_host_impl.cc
-@@ -378,6 +378,10 @@ class RendererSandboxedProcessLauncherDelegate
-     : public SandboxedProcessLauncherDelegate {
-  public:
-   RendererSandboxedProcessLauncherDelegate() {}
+@@ -414,6 +414,11 @@ class RendererSandboxedProcessLauncherDelegate
+   {
+   }
+ 
 +#if BUILDFLAG(USE_ZYGOTE_HANDLE)
 +  RendererSandboxedProcessLauncherDelegate(bool use_zygote):
 +    use_zygote_(use_zygote) {}
 +#endif
- 
++
    ~RendererSandboxedProcessLauncherDelegate() override {}
  
-@@ -397,6 +401,9 @@ class RendererSandboxedProcessLauncherDelegate
+ #if defined(OS_WIN)
+@@ -435,6 +440,9 @@ class RendererSandboxedProcessLauncherDelegate
  
  #if BUILDFLAG(USE_ZYGOTE_HANDLE)
    service_manager::ZygoteHandle GetZygote() override {
@@ -46,19 +47,22 @@ index 20d0b4a801bdbe0300f878f369fc9017fc8aea3f..6302948343ee810a9d35a70be0c91a1f
      const base::CommandLine& browser_command_line =
          *base::CommandLine::ForCurrentProcess();
      base::CommandLine::StringType renderer_prefix =
-@@ -410,6 +417,11 @@ class RendererSandboxedProcessLauncherDelegate
-   service_manager::SandboxType GetSandboxType() override {
-     return service_manager::SANDBOX_TYPE_RENDERER;
+@@ -449,10 +457,13 @@ class RendererSandboxedProcessLauncherDelegate
+     return service_manager::SandboxType::kRenderer;
    }
-+
-+ private:
+ 
+-#if defined(OS_WIN)
+  private:
++#if defined(OS_WIN)
+   const bool renderer_code_integrity_enabled_;
+ #endif
 +#if BUILDFLAG(USE_ZYGOTE_HANDLE)
 +  bool use_zygote_ = true;
 +#endif
  };
  
  const char kSessionStorageHolderKey[] = "kSessionStorageHolderKey";
-@@ -1746,11 +1758,18 @@ bool RenderProcessHostImpl::Init() {
+@@ -1748,11 +1759,18 @@ bool RenderProcessHostImpl::Init() {
        cmd_line->PrependWrapper(renderer_prefix);
      AppendRendererCommandLine(cmd_line.get());
  
@@ -76,5 +80,5 @@ index 20d0b4a801bdbe0300f878f369fc9017fc8aea3f..6302948343ee810a9d35a70be0c91a1f
 -        std::make_unique<RendererSandboxedProcessLauncherDelegate>(),
 +        std::move(delegate),
          std::move(cmd_line), GetID(), this, std::move(mojo_invitation_),
-         base::BindRepeating(&RenderProcessHostImpl::OnMojoError, id_));
-     channel_->Pause();
+         base::BindRepeating(&RenderProcessHostImpl::OnMojoError, id_),
+         GetV8SnapshotFilesToPreload());

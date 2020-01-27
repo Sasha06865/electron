@@ -4,7 +4,7 @@ import { closeAllWindows } from './window-helpers'
 import { emittedOnce } from './events-helpers'
 import { expect } from 'chai'
 
-async function loadWebView(w: WebContents, attributes: Record<string, string>): Promise<void> {
+async function loadWebView (w: WebContents, attributes: Record<string, string>): Promise<void> {
   await w.executeJavaScript(`
     new Promise((resolve, reject) => {
       const webview = new WebView()
@@ -161,10 +161,24 @@ describe('<webview> tag', function () {
     })
     BrowserWindow.removeDevToolsExtension('foo')
 
-    const extensionPath = path.join(fixtures, 'devtools-extensions', 'foo')
+    const extensionPath = path.join(__dirname, 'fixtures', 'devtools-extensions', 'foo')
     BrowserWindow.addDevToolsExtension(extensionPath)
 
-    w.loadFile(path.join(fixtures, 'pages', 'webview-devtools.html'))
+    w.loadFile(path.join(__dirname, 'fixtures', 'pages', 'webview-devtools.html'))
+    app.once('web-contents-created', (e, webContents) => {
+      webContents.on('devtools-opened', function () {
+        const showPanelIntervalId = setInterval(function () {
+          if (!webContents.isDestroyed() && webContents.devToolsWebContents) {
+            webContents.devToolsWebContents.executeJavaScript('(' + function () {
+              const lastPanelId: any = (window as any).UI.inspectorView._tabbedPane._tabs.peekLast().id;
+              (window as any).UI.inspectorView.showPanel(lastPanelId)
+            }.toString() + ')()')
+          } else {
+            clearInterval(showPanelIntervalId)
+          }
+        }, 100)
+      })
+    })
 
     const [, { runtimeId, tabId }] = await emittedOnce(ipcMain, 'answer')
     expect(runtimeId).to.equal('foo')
@@ -395,7 +409,7 @@ describe('<webview> tag', function () {
       await w.loadURL('about:blank')
     })
     afterEach(closeAllWindows)
-    
+
     it('can enable context isolation', async () => {
       loadWebView(w.webContents, {
         allowpopups: 'yes',
@@ -439,7 +453,7 @@ describe('<webview> tag', function () {
 
     const partition = 'permissionTest'
 
-    function setUpRequestHandler(webContentsId: number, requestedPermission: string) {
+    function setUpRequestHandler (webContentsId: number, requestedPermission: string) {
       return new Promise((resolve, reject) => {
         session.fromPartition(partition).setPermissionRequestHandler(function (webContents, permission, callback) {
           if (webContents.id === webContentsId) {
@@ -523,7 +537,7 @@ describe('<webview> tag', function () {
     it('emits when accessing external protocol', async () => {
       loadWebView(w.webContents, {
         src: `magnet:test`,
-        partition,
+        partition
       })
       const [, webViewContents] = await emittedOnce(app, 'web-contents-created')
       await setUpRequestHandler(webViewContents.id, 'openExternal')
@@ -545,4 +559,49 @@ describe('<webview> tag', function () {
     })
   })
 
+  describe('enableremotemodule attribute', () => {
+    let w: BrowserWindow
+    beforeEach(async () => {
+      w = new BrowserWindow({ show: false, webPreferences: { nodeIntegration: true, webviewTag: true } })
+      await w.loadURL('about:blank')
+    })
+    afterEach(closeAllWindows)
+
+    const generateSpecs = (description: string, sandbox: boolean) => {
+      describe(description, () => {
+        const preload = `file://${fixtures}/module/preload-disable-remote.js`
+        const src = `file://${fixtures}/api/blank.html`
+
+        it('enables the remote module by default', async () => {
+          loadWebView(w.webContents, {
+            preload,
+            src,
+            sandbox: sandbox.toString()
+          })
+          const [, webViewContents] = await emittedOnce(app, 'web-contents-created')
+          const [, , message] = await emittedOnce(webViewContents, 'console-message')
+
+          const typeOfRemote = JSON.parse(message)
+          expect(typeOfRemote).to.equal('object')
+        })
+
+        it('disables the remote module when false', async () => {
+          loadWebView(w.webContents, {
+            preload,
+            src,
+            sandbox: sandbox.toString(),
+            enableremotemodule: 'false'
+          })
+          const [, webViewContents] = await emittedOnce(app, 'web-contents-created')
+          const [, , message] = await emittedOnce(webViewContents, 'console-message')
+
+          const typeOfRemote = JSON.parse(message)
+          expect(typeOfRemote).to.equal('undefined')
+        })
+      })
+    }
+
+    generateSpecs('without sandbox', false)
+    generateSpecs('with sandbox', true)
+  })
 })

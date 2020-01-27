@@ -19,11 +19,14 @@
 #include "base/mac/bundle_locations.h"
 #include "base/path_service.h"
 #include "chrome/common/chrome_paths.h"
+#include "components/content_settings/core/common/content_settings_pattern.h"
 #include "content/public/common/content_switches.h"
 #include "electron/buildflags/buildflags.h"
+#include "extensions/common/constants.h"
 #include "ipc/ipc_buildflags.h"
 #include "services/service_manager/embedder/switches.h"
 #include "services/service_manager/sandbox/switches.h"
+#include "services/tracing/public/cpp/stack_sampling/tracing_sampler_profiler.h"
 #include "shell/app/atom_content_client.h"
 #include "shell/browser/atom_browser_client.h"
 #include "shell/browser/atom_gpu_client.h"
@@ -126,9 +129,14 @@ void LoadResourceBundle(const std::string& locale) {
 #endif  // BUILDFLAG(ENABLE_PDF_VIEWER)
 }
 
-AtomMainDelegate::AtomMainDelegate() {}
+AtomMainDelegate::AtomMainDelegate() = default;
 
-AtomMainDelegate::~AtomMainDelegate() {}
+AtomMainDelegate::~AtomMainDelegate() = default;
+
+const char* const AtomMainDelegate::kNonWildcardDomainNonPortSchemes[] = {
+    extensions::kExtensionScheme};
+const size_t AtomMainDelegate::kNonWildcardDomainNonPortSchemesSize =
+    base::size(kNonWildcardDomainNonPortSchemes);
 
 bool AtomMainDelegate::BasicStartupComplete(int* exit_code) {
   auto* command_line = base::CommandLine::ForCurrentProcess();
@@ -182,7 +190,14 @@ bool AtomMainDelegate::BasicStartupComplete(int* exit_code) {
   if (env->HasVar("ELECTRON_DISABLE_SANDBOX"))
     command_line->AppendSwitch(service_manager::switches::kNoSandbox);
 
+  tracing_sampler_profiler_ =
+      tracing::TracingSamplerProfiler::CreateOnMainThread();
+
   chrome::RegisterPathProvider();
+#if BUILDFLAG(ENABLE_ELECTRON_EXTENSIONS)
+  ContentSettingsPattern::SetNonWildcardDomainNonPortSchemes(
+      kNonWildcardDomainNonPortSchemes, kNonWildcardDomainNonPortSchemesSize);
+#endif
 
 #if defined(OS_MACOSX)
   OverrideChildProcessPath();
@@ -223,7 +238,7 @@ void AtomMainDelegate::PostEarlyInitialization(bool is_running_tests) {
   if (cmd_line->HasSwitch(::switches::kLang)) {
     const std::string locale = cmd_line->GetSwitchValueASCII(::switches::kLang);
     const base::FilePath locale_file_path =
-        ui::ResourceBundle::GetSharedInstance().GetLocaleFilePath(locale, true);
+        ui::ResourceBundle::GetSharedInstance().GetLocaleFilePath(locale);
     if (!locale_file_path.empty()) {
       custom_locale = locale;
 #if defined(OS_LINUX)
@@ -283,12 +298,12 @@ void AtomMainDelegate::PreCreateMainMessageLoop() {
 }
 
 content::ContentBrowserClient* AtomMainDelegate::CreateContentBrowserClient() {
-  browser_client_.reset(new AtomBrowserClient);
+  browser_client_ = std::make_unique<AtomBrowserClient>();
   return browser_client_.get();
 }
 
 content::ContentGpuClient* AtomMainDelegate::CreateContentGpuClient() {
-  gpu_client_.reset(new AtomGpuClient);
+  gpu_client_ = std::make_unique<AtomGpuClient>();
   return gpu_client_.get();
 }
 
@@ -297,16 +312,16 @@ AtomMainDelegate::CreateContentRendererClient() {
   auto* command_line = base::CommandLine::ForCurrentProcess();
 
   if (IsSandboxEnabled(command_line)) {
-    renderer_client_.reset(new AtomSandboxedRendererClient);
+    renderer_client_ = std::make_unique<AtomSandboxedRendererClient>();
   } else {
-    renderer_client_.reset(new AtomRendererClient);
+    renderer_client_ = std::make_unique<AtomRendererClient>();
   }
 
   return renderer_client_.get();
 }
 
 content::ContentUtilityClient* AtomMainDelegate::CreateContentUtilityClient() {
-  utility_client_.reset(new AtomContentUtilityClient);
+  utility_client_ = std::make_unique<AtomContentUtilityClient>();
   return utility_client_.get();
 }
 
@@ -325,10 +340,6 @@ bool AtomMainDelegate::DelaySandboxInitialization(
   return process_type == kRelauncherProcess;
 }
 #endif
-
-bool AtomMainDelegate::ShouldLockSchemeRegistry() {
-  return false;
-}
 
 bool AtomMainDelegate::ShouldCreateFeatureList() {
   return false;

@@ -7,48 +7,11 @@
 
 #include <type_traits>
 
-#include "base/bind.h"
 #include "gin/dictionary.h"
+#include "shell/common/gin_converters/std_converter.h"
 #include "shell/common/gin_helper/function_template.h"
 
 namespace gin_helper {
-
-// Base template - used only for non-member function pointers. Other types
-// either go to one of the below specializations, or go here and fail to compile
-// because of base::Bind().
-template <typename T, typename Enable = void>
-struct CallbackTraits {
-  static v8::Local<v8::FunctionTemplate> CreateTemplate(v8::Isolate* isolate,
-                                                        T callback) {
-    return CreateFunctionTemplate(isolate, base::BindRepeating(callback));
-  }
-};
-
-// Specialization for base::Callback.
-template <typename T>
-struct CallbackTraits<base::Callback<T>> {
-  static v8::Local<v8::FunctionTemplate> CreateTemplate(
-      v8::Isolate* isolate,
-      const base::RepeatingCallback<T>& callback) {
-    return CreateFunctionTemplate(isolate, callback);
-  }
-};
-
-// Specialization for member function pointers. We need to handle this case
-// specially because the first parameter for callbacks to MFP should typically
-// come from the the JavaScript "this" object the function was called on, not
-// from the first normal parameter.
-template <typename T>
-struct CallbackTraits<
-    T,
-    typename std::enable_if<std::is_member_function_pointer<T>::value>::type> {
-  static v8::Local<v8::FunctionTemplate> CreateTemplate(v8::Isolate* isolate,
-                                                        T callback) {
-    int flags = HolderIsFirstArgument;
-    return CreateFunctionTemplate(isolate, base::BindRepeating(callback),
-                                  flags);
-  }
-};
 
 // Adds a few more extends methods to gin::Dictionary.
 //
@@ -64,6 +27,37 @@ class Dictionary : public gin::Dictionary {
   // safe in this case.
   Dictionary(const gin::Dictionary& dict)  // NOLINT(runtime/explicit)
       : gin::Dictionary(dict) {}
+
+  // Differences from the Get method in gin::Dictionary:
+  // 1. This is a const method;
+  // 2. It checks whether the key exists before reading;
+  // 3. It accepts arbitrary type of key.
+  template <typename K, typename V>
+  bool Get(const K& key, V* out) const {
+    // Check for existence before getting, otherwise this method will always
+    // returns true when T == v8::Local<v8::Value>.
+    v8::Local<v8::Context> context = isolate()->GetCurrentContext();
+    v8::Local<v8::Value> v8_key = gin::ConvertToV8(isolate(), key);
+    v8::Local<v8::Value> value;
+    v8::Maybe<bool> result = GetHandle()->Has(context, v8_key);
+    if (result.IsJust() && result.FromJust() &&
+        GetHandle()->Get(context, v8_key).ToLocal(&value))
+      return gin::ConvertFromV8(isolate(), value, out);
+    return false;
+  }
+
+  // Differences from the Set method in gin::Dictionary:
+  // 1. It accepts arbitrary type of key.
+  template <typename K, typename V>
+  bool Set(const K& key, const V& val) {
+    v8::Local<v8::Value> v8_value;
+    if (!gin::TryConvertToV8(isolate(), val, &v8_value))
+      return false;
+    v8::Maybe<bool> result =
+        GetHandle()->Set(isolate()->GetCurrentContext(),
+                         gin::ConvertToV8(isolate(), key), v8_value);
+    return !result.IsNothing() && result.FromJust();
+  }
 
   template <typename T>
   bool GetHidden(base::StringPiece key, T* out) const {
@@ -112,11 +106,33 @@ class Dictionary : public gin::Dictionary {
     return !result.IsNothing() && result.FromJust();
   }
 
+  // Note: If we plan to add more Set methods, consider adding an option instead
+  // of copying code.
+  template <typename T>
+  bool SetReadOnlyNonConfigurable(base::StringPiece key, T val) {
+    v8::Local<v8::Value> v8_value;
+    if (!gin::TryConvertToV8(isolate(), val, &v8_value))
+      return false;
+    v8::Maybe<bool> result = GetHandle()->DefineOwnProperty(
+        isolate()->GetCurrentContext(), gin::StringToV8(isolate(), key),
+        v8_value,
+        static_cast<v8::PropertyAttribute>(v8::ReadOnly | v8::DontDelete));
+    return !result.IsNothing() && result.FromJust();
+  }
+
+  bool Has(base::StringPiece key) const {
+    v8::Maybe<bool> result = GetHandle()->Has(isolate()->GetCurrentContext(),
+                                              gin::StringToV8(isolate(), key));
+    return !result.IsNothing() && result.FromJust();
+  }
+
   bool Delete(base::StringPiece key) {
     v8::Maybe<bool> result = GetHandle()->Delete(
         isolate()->GetCurrentContext(), gin::StringToV8(isolate(), key));
     return !result.IsNothing() && result.FromJust();
   }
+
+  bool IsEmpty() const { return isolate() == nullptr || GetHandle().IsEmpty(); }
 
   v8::Local<v8::Object> GetHandle() const {
     return gin::ConvertToV8(isolate(),

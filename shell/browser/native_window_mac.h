@@ -28,7 +28,7 @@ class RootViewMac;
 
 class NativeWindowMac : public NativeWindow {
  public:
-  NativeWindowMac(const mate::Dictionary& options, NativeWindow* parent);
+  NativeWindowMac(const gin_helper::Dictionary& options, NativeWindow* parent);
   ~NativeWindowMac() override;
 
   // NativeWindow:
@@ -78,8 +78,7 @@ class NativeWindowMac : public NativeWindow {
   bool IsClosable() override;
   void SetAlwaysOnTop(ui::ZOrderLevel z_order,
                       const std::string& level,
-                      int relativeLevel,
-                      std::string* error) override;
+                      int relativeLevel) override;
   ui::ZOrderLevel GetZOrderLevel() override;
   void Center() override;
   void Invalidate() override;
@@ -94,6 +93,7 @@ class NativeWindowMac : public NativeWindow {
   void SetKiosk(bool kiosk) override;
   bool IsKiosk() override;
   void SetBackgroundColor(SkColor color) override;
+  SkColor GetBackgroundColor() override;
   void SetHasShadow(bool has_shadow) override;
   bool HasShadow() override;
   void SetOpacity(const double opacity) override;
@@ -117,8 +117,7 @@ class NativeWindowMac : public NativeWindow {
   void SetOverlayIcon(const gfx::Image& overlay,
                       const std::string& description) override;
 
-  void SetVisibleOnAllWorkspaces(bool visible,
-                                 bool visibleOnFullScreen) override;
+  void SetVisibleOnAllWorkspaces(bool visible) override;
   bool IsVisibleOnAllWorkspaces() override;
 
   void SetAutoHideCursor(bool auto_hide) override;
@@ -134,9 +133,9 @@ class NativeWindowMac : public NativeWindow {
 
   void SetVibrancy(const std::string& type) override;
   void SetTouchBar(
-      const std::vector<mate::PersistentDictionary>& items) override;
+      std::vector<gin_helper::PersistentDictionary> items) override;
   void RefreshTouchBarItem(const std::string& item_id) override;
-  void SetEscapeTouchBarItem(const mate::PersistentDictionary& item) override;
+  void SetEscapeTouchBarItem(gin_helper::PersistentDictionary item) override;
   void SetGTKDarkThemeEnabled(bool use_dark_theme) override {}
 
   gfx::Rect ContentBoundsToWindowBounds(const gfx::Rect& bounds) const override;
@@ -148,6 +147,11 @@ class NativeWindowMac : public NativeWindow {
   // Set the attribute of NSWindow while work around a bug of zoom button.
   void SetStyleMask(bool on, NSUInteger flag);
   void SetCollectionBehavior(bool on, NSUInteger flag);
+  void SetWindowLevel(int level);
+
+  // Custom traffic light positioning
+  void RepositionTrafficLights();
+  void SetExitingFullScreen(bool flag);
 
   enum class TitleBarStyle {
     NORMAL,
@@ -161,7 +165,8 @@ class NativeWindowMac : public NativeWindow {
   AtomTouchBar* touch_bar() const { return touch_bar_.get(); }
   bool zoom_to_page_width() const { return zoom_to_page_width_; }
   bool fullscreen_window_title() const { return fullscreen_window_title_; }
-  bool simple_fullscreen() const { return always_simple_fullscreen_; }
+  bool always_simple_fullscreen() const { return always_simple_fullscreen_; }
+  bool exiting_fullscreen() const { return exiting_fullscreen_; }
 
  protected:
   // views::WidgetDelegate:
@@ -198,6 +203,8 @@ class NativeWindowMac : public NativeWindow {
   bool zoom_to_page_width_ = false;
   bool fullscreen_window_title_ = false;
   bool resizable_ = true;
+  bool exiting_fullscreen_ = false;
+  gfx::Point traffic_light_position_;
 
   NSInteger attention_request_id_ = 0;  // identifier from requestUserAttention
 
